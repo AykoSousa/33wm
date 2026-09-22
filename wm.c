@@ -78,6 +78,8 @@ static void grab_keys(WM *wm) {
     grab_key(wm, XK_v, MOD | XCB_MOD_MASK_SHIFT); // Super + Shift + V (Expulsar janela)
     grab_key(wm, XK_j, MOD); // Super + J (Foco abaixo)
     grab_key(wm, XK_k, MOD); // Super + K (Foco acima)
+    grab_key(wm, XK_minus, MOD); // Super + - (Diminuir largura)
+    grab_key(wm, XK_equal, MOD); // Super + = (Aumentar largura)
 
     xcb_flush(wm->conn);
 }
@@ -231,6 +233,19 @@ static void handle_key_press(WM *wm, xcb_key_press_event_t *ev) {
     }
     else if (keysym == XK_q && state == MOD) {
         wm_close_active_window(wm);
+    }
+    // Super + Minus (-) -> Diminui a largura da coluna em 50px
+    else if (keysym == XK_minus && state == MOD) {
+        workspace_resize_active_column(wm->ws, -50);
+        wm_apply_layout(wm);
+        wm_focus_active(wm);
+    }
+    // Super + Equal (= / +) -> Aumenta a largura da coluna em 50px
+    else if ((keysym == XK_equal || keysym == XK_plus) && 
+            (state == MOD || state == (MOD | XCB_MOD_MASK_SHIFT))) {
+        workspace_resize_active_column(wm->ws, 50);
+        wm_apply_layout(wm);
+        wm_focus_active(wm);
     }
 }
 
