@@ -74,6 +74,10 @@ static void grab_keys(WM *wm) {
     grab_key(wm, XK_l, MOD);  // Super + L (Right focus)
     grab_key(wm, XK_Return, MOD);  // Super + Enter (Terminal)
     grab_key(wm, XK_q, MOD); // Super + Q (Close Window)
+    grab_key(wm, XK_v, MOD); // Super + V (Consumir coluna)
+    grab_key(wm, XK_v, MOD | XCB_MOD_MASK_SHIFT); // Super + Shift + V (Expulsar janela)
+    grab_key(wm, XK_j, MOD); // Super + J (Foco abaixo)
+    grab_key(wm, XK_k, MOD); // Super + K (Foco acima)
 
     xcb_flush(wm->conn);
 }
@@ -144,30 +148,16 @@ void wm_apply_layout(WM *wm) {
             Window *w = &col->windows[i];
             xcb_window_t win_id = (xcb_window_t)w->id;
 
-            // Define se a janela pertence à coluna ativa
-            uint32_t border_color = (col == active_col) ? COLOR_ACTIVE : COLOR_INACTIVE;
+            bool is_active_win = (col == active_col && i == col->active_win_idx);
+            uint32_t border_color = is_active_win ? COLOR_ACTIVE : COLOR_INACTIVE;
 
-            // 1. Aplica a cor da borda
-            xcb_change_window_attributes(
-                wm->conn,
-                win_id,
-                XCB_CW_BORDER_PIXEL,
-                &border_color
-            );
+            xcb_change_window_attributes(wm->conn, win_id, XCB_CW_BORDER_PIXEL, &border_color);
 
-            // 2. Aplica posição, tamanho e largura da borda
             uint32_t mask = XCB_CONFIG_WINDOW_X | XCB_CONFIG_WINDOW_Y |
                             XCB_CONFIG_WINDOW_WIDTH | XCB_CONFIG_WINDOW_HEIGHT |
                             XCB_CONFIG_WINDOW_BORDER_WIDTH;
 
-            uint32_t values[5] = {
-                (uint32_t)w->x,
-                (uint32_t)w->y,
-                (uint32_t)w->w,
-                (uint32_t)w->h,
-                BORDER_WIDTH
-            };
-
+            uint32_t values[5] = { (uint32_t)w->x, (uint32_t)w->y, (uint32_t)w->w, (uint32_t)w->h, BORDER_WIDTH };
             xcb_configure_window(wm->conn, win_id, mask, values);
         }
     }
@@ -181,7 +171,7 @@ static void wm_focus_active(WM *wm) {
     xcb_window_t target = wm->root;
 
     if (col && col->window_count > 0) {
-        target = (xcb_window_t)col->windows[0].id;
+        target = (xcb_window_t)col->windows[col->active_win_idx].id;
     }
 
     xcb_set_input_focus(wm->conn, XCB_INPUT_FOCUS_POINTER_ROOT, target, XCB_CURRENT_TIME);
@@ -189,31 +179,57 @@ static void wm_focus_active(WM *wm) {
 }
 
 static void handle_key_press(WM *wm, xcb_key_press_event_t *ev) {
-    /* Ignora CapsLock/NumLock; compara exato para que Super+Shift+H
-     * não dispare o atalho de Super+H. */
     uint16_t state = ev->state & ~LOCK_MASKS;
-    if (state != MOD) return;
-
     xcb_keysym_t keysym = xcb_key_symbols_get_keysym(wm->keysyms, ev->detail, 0);
 
-    if (keysym == XK_h) {
+    // Super + H (Esquerda)
+    if (keysym == XK_h && state == MOD) {
         if (wm->ws->active_col && wm->ws->active_col->prev) {
             workspace_focus_column(wm->ws, wm->ws->active_col->prev);
             wm_apply_layout(wm);
             wm_focus_active(wm);
         }
     }
-    else if (keysym == XK_l) {
+    // Super + L (Direita)
+    else if (keysym == XK_l && state == MOD) {
         if (wm->ws->active_col && wm->ws->active_col->next) {
             workspace_focus_column(wm->ws, wm->ws->active_col->next);
             wm_apply_layout(wm);
             wm_focus_active(wm);
         }
     }
-    else if (keysym == XK_Return) {
+    // Super + J (Abaixo)
+    else if (keysym == XK_j && state == MOD) {
+        if (wm->ws->active_col) {
+            column_focus_next_window(wm->ws->active_col);
+            wm_apply_layout(wm);
+            wm_focus_active(wm);
+        }
+    }
+    // Super + K (Acima)
+    else if (keysym == XK_k && state == MOD) {
+        if (wm->ws->active_col) {
+            column_focus_prev_window(wm->ws->active_col);
+            wm_apply_layout(wm);
+            wm_focus_active(wm);
+        }
+    }
+    // Super + V (Consumir coluna da direita)
+    else if (keysym == XK_v && state == MOD) {
+        workspace_consume_next_column(wm->ws);
+        wm_apply_layout(wm);
+        wm_focus_active(wm);
+    }
+    // Super + Shift + V (Expulsar janela para nova coluna)
+    else if (keysym == XK_v && state == (MOD | XCB_MOD_MASK_SHIFT)) {
+        workspace_expel_active_window(wm->ws);
+        wm_apply_layout(wm);
+        wm_focus_active(wm);
+    }
+    else if (keysym == XK_Return && state == MOD) {
         spawn(TERMINAL);
     }
-    else if (keysym == XK_q) {
+    else if (keysym == XK_q && state == MOD) {
         wm_close_active_window(wm);
     }
 }
@@ -237,18 +253,9 @@ static void handle_map_request(WM *wm, xcb_map_request_event_t *ev) {
 }
 
 static void handle_destroy_notify(WM *wm, xcb_destroy_notify_event_t *ev) {
-    for (Column *col = wm->ws->first_col; col != NULL; col = col->next) {
-        for (int i = 0; i < col->window_count; i++) {
-            if (col->windows[i].id == ev->window) {
-                workspace_remove_column(wm->ws, col);
-                free(col->windows);
-                free(col);
-                wm_apply_layout(wm);
-                wm_focus_active(wm);
-                return;
-            }
-        }
-    }
+    workspace_remove_window_by_id(wm->ws, ev->window);
+    wm_apply_layout(wm);
+    wm_focus_active(wm);
 }
 
 /* O servidor avisa quando o mapa de teclado muda (o Xephyr faz isso ao
@@ -300,7 +307,8 @@ void wm_cleanup(WM *wm) {
 void wm_close_active_window(WM *wm) {
     if (!wm->ws->active_col || wm->ws->active_col->window_count == 0) return;
 
-    xcb_window_t win = (xcb_window_t)wm->ws->active_col->windows[0].id;
+    Column *col = wm->ws->active_col;
+    xcb_window_t win = (xcb_window_t)col->windows[col->active_win_idx].id;
 
     xcb_client_message_event_t ev;
     memset(&ev, 0, sizeof(ev));
@@ -311,13 +319,6 @@ void wm_close_active_window(WM *wm) {
     ev.data.data32[0] = wm->atom_wm_delete_window;
     ev.data.data32[1] = XCB_CURRENT_TIME;
 
-    xcb_send_event(
-        wm->conn,
-        0,
-        win,
-        XCB_EVENT_MASK_NO_EVENT,
-        (const char *)&ev
-    );
-
+    xcb_send_event(wm->conn, 0, win, XCB_EVENT_MASK_NO_EVENT, (const char *)&ev);
     xcb_flush(wm->conn);
 }
