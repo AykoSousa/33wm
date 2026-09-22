@@ -39,5 +39,6 @@ void column_focus_next_window(Column *col);
 void column_focus_prev_window(Column *col);
 void workspace_consume_next_column(Workspace *ws);
 void workspace_expel_active_window(Workspace *ws);
+void workspace_resize_active_column(Workspace *ws, int delta);
 
 #endif
