@@ -1,4 +1,6 @@
 #include <stdio.h>
+#include <string.h>
+#include <stdlib.h>
 #include "layout.h"
 
 void workspace_recalculate(Workspace *ws) {
@@ -98,4 +100,92 @@ void workspace_remove_column(Workspace *ws, Column *target) {
     } else {
         workspace_recalculate(ws);
     }
+}
+
+void column_focus_next_window(Column *col) {
+    if (!col || col->window_count <= 1) return;
+    col->active_win_idx = (col->active_win_idx + 1) % col->window_count;
+}
+
+void column_focus_prev_window(Column *col) {
+    if (!col || col->window_count <= 1) return;
+    col->active_win_idx = (col->active_win_idx - 1 + col->window_count) % col->window_count;
+}
+
+void workspace_remove_window_by_id(Workspace *ws, uint32_t win_id) {
+    if (!ws) return;
+
+    for (Column *col = ws->first_col; col != NULL; col = col->next) {
+        for (int i = 0; i < col->window_count; i++) {
+            if (col->windows[i].id == win_id) {
+                if (col->window_count == 1) {
+                    workspace_remove_column(ws, col);
+                    free(col->windows);
+                    free(col);
+                    return;
+                }
+
+                for (int j = i; j < col->window_count - 1; j++) {
+                    col->windows[j] = col->windows[j + 1];
+                }
+                col->window_count--;
+                col->windows = realloc(col->windows, sizeof(Window) * col->window_count);
+
+                if (col->active_win_idx >= col->window_count) {
+                    col->active_win_idx = col->window_count - 1;
+                }
+
+                workspace_recalculate(ws);
+                return;
+            }
+        }
+    }
+}
+
+void workspace_consume_next_column(Workspace *ws) {
+    if (!ws || !ws->active_col || !ws->active_col->next) return;
+
+    Column *curr = ws->active_col;
+    Column *next = curr->next;
+
+    int new_count = curr->window_count + next->window_count;
+    curr->windows = realloc(curr->windows, sizeof(Window) * new_count);
+
+    for (int i = 0; i < next->window_count; i++) {
+        curr->windows[curr->window_count + i] = next->windows[i];
+    }
+    curr->window_count = new_count;
+
+    workspace_remove_column(ws, next);
+    free(next->windows);
+    free(next);
+
+    workspace_recalculate(ws);
+}
+
+void workspace_expel_active_window(Workspace *ws) {
+    if (!ws || !ws->active_col || ws->active_col->window_count <= 1) return;
+
+    Column *curr = ws->active_col;
+    int idx = curr->active_win_idx;
+    Window target_win = curr->windows[idx];
+
+    for (int i = idx; i < curr->window_count - 1; i++) {
+        curr->windows[i] = curr->windows[i + 1];
+    }
+    curr->window_count--;
+    curr->windows = realloc(curr->windows, sizeof(Window) * curr->window_count);
+    if (curr->active_win_idx >= curr->window_count) {
+        curr->active_win_idx = curr->window_count - 1;
+    }
+
+    Window *new_win_arr = malloc(sizeof(Window));
+    *new_win_arr = target_win;
+
+    Column *new_col = calloc(1, sizeof(Column));
+    new_col->windows = new_win_arr;
+    new_col->window_count = 1;
+    new_col->width = ws->screen_w / 2;
+
+    workspace_insert_column_after(ws, new_col, curr);
 }
