@@ -189,3 +189,19 @@ void workspace_expel_active_window(Workspace *ws) {
 
     workspace_insert_column_after(ws, new_col, curr);
 }
+
+void workspace_resize_active_column(Workspace *ws, int delta) {
+    if (!ws || !ws->active_col) return;
+
+    int min_width = 200;
+    int max_width = ws->screen_w;
+
+    int new_width = ws->active_col->width + delta;
+
+    if (new_width < min_width) new_width = min_width;
+    if (new_width > max_width) new_width = max_width;
+
+    ws->active_col->width = new_width;
+
+    workspace_focus_column(ws, ws->active_col);
+}
