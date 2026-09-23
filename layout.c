@@ -4,18 +4,36 @@
 #include "layout.h"
 
 void workspace_recalculate(Workspace *ws) {
+    if (!ws || !ws->first_col) return;
+
+    int top_padding = 26; // Espaço reservado para o lemonbar
+    int avail_h = ws->screen_h - top_padding;
+
+    // Modo Fullscreen: A janela ativa ocupa 100% da área útil
+    if (ws->is_fullscreen && ws->active_col && ws->active_col->window_count > 0) {
+        int active_idx = ws->active_col->active_win_idx;
+        Window *w = &ws->active_col->windows[active_idx];
+        
+        w->x = 0;
+        w->y = top_padding;
+        w->w = ws->screen_w;
+        w->h = avail_h;
+        return;
+    }
+
+    // Modo Tiling Normal
     int current_x = -ws->camera_x;
-    
     for (Column *col = ws->first_col; col != NULL; col = col->next) {
-        int usable_h = ws->screen_h - ((col->window_count + 1) * ws->gap);
+        int usable_h = avail_h - ((col->window_count + 1) * ws->gap);
         int win_h = usable_h / col->window_count;
-        int current_y = ws->gap;
+        int current_y = top_padding + ws->gap;
 
         for (int i = 0; i < col->window_count; i++) {
-            col->windows[i].x = current_x + ws->gap;
-            col->windows[i].y = current_y;
-            col->windows[i].w = col->width - (2 * ws->gap);
-            col->windows[i].h = win_h;
+            Window *w = &col->windows[i];
+            w->x = current_x + ws->gap;
+            w->y = current_y;
+            w->w = col->width - (2 * ws->gap);
+            w->h = win_h;
 
             current_y += win_h + ws->gap;
         }
@@ -204,4 +222,27 @@ void workspace_resize_active_column(Workspace *ws, int delta) {
     ws->active_col->width = new_width;
 
     workspace_focus_column(ws, ws->active_col);
+}
+
+void workspace_add_window(Workspace *ws, uint32_t win_id) {
+    if (!ws) return;
+
+    // Aloca a nova janela
+    Window *win_arr = malloc(sizeof(Window));
+    win_arr[0].id = win_id;
+    win_arr[0].x = 0;
+    win_arr[0].y = 0;
+    win_arr[0].w = 0;
+    win_arr[0].h = 0;
+
+    // Cria a coluna para essa janela (com largura padrão de metade da tela)
+    Column *new_col = calloc(1, sizeof(Column));
+    new_col->windows = win_arr;
+    new_col->window_count = 1;
+    new_col->active_win_idx = 0;
+    new_col->width = ws->screen_w / 2;
+
+    // Insere a coluna no workspace e passa o foco para ela
+    workspace_insert_column_after(ws, new_col, ws->active_col);
+    workspace_focus_column(ws, new_col);
 }
