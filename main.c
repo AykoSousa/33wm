@@ -26,16 +26,7 @@ int main(void) {
     signal(SIGINT, handle_sigint);
     signal(SIGTERM, handle_sigint);
 
-    Workspace ws = {
-        .first_col = NULL,
-        .active_col = NULL,
-        .camera_x = 0,
-        .screen_w = 0,
-        .screen_h = 0,
-        .gap = 12
-    };
-
-    WM *wm = wm_init(&ws);
+    WM *wm = wm_init();
     if (!wm) {
         fprintf(stderr, "Fatal error: ins't possible to init XCB layer.\n");
         return EXIT_FAILURE;
