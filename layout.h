@@ -26,12 +26,14 @@ typedef struct {
     int screen_w;
     int screen_h;
     int gap;
+    int is_fullscreen;
 } Workspace;
 
 void workspace_recalculate(Workspace *ws);
 void workspace_focus_column(Workspace *ws, Column *target);
 void workspace_insert_column_after(Workspace *ws, Column *new_col, Column *target);
 void workspace_remove_column(Workspace *ws, Column *target);
+void workspace_add_window(Workspace *ws, uint32_t win_id);
 
 // Novas funções para gerenciamento vertical
 void workspace_remove_window_by_id(Workspace *ws, uint32_t win_id);
