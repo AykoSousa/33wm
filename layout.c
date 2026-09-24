@@ -3,17 +3,44 @@
 #include <stdlib.h>
 #include "layout.h"
 
-void workspace_recalculate(Workspace *ws) {
+static void workspace_center_on_column(Workspace *ws, Column *target) {
+    if (!ws || !target) return;
+    int col_x = 0;
+    for (Column *c = ws->first_col; c != NULL && c != target; c = c->next) {
+        col_x += c->width;
+    }
+    ws->camera_x = col_x;
+}
+
+void column_toggle_maximize(Workspace *ws, Column *col) {
+    if (!col || !ws) return;
+
+    col->is_maximized = !col->is_maximized;
+
+    if (col->is_maximized) {
+        // Salva a largura atual antes de expandir
+        col->original_width = col->width;
+        // Expande a coluna para cobrir a LARGURA TOTAL da tela
+        col->width = ws->screen_w;
+    } else {
+        // Restaura a largura antiga (ou metade da tela caso não tenha registro)
+        if (col->original_width > 0) {
+            col->width = col->original_width;
+        } else {
+            col->width = ws->screen_w / 2;
+        }
+    }
+}
+
+void workspace_recalculate(Workspace *ws, int top_padding) {
     if (!ws || !ws->first_col) return;
 
-    int top_padding = 26; // Espaço reservado para o lemonbar
     int avail_h = ws->screen_h - top_padding;
 
-    // Modo Fullscreen: A janela ativa ocupa 100% da área útil
+    // Fullscreen estrito (i3 - Super + F)
     if (ws->is_fullscreen && ws->active_col && ws->active_col->window_count > 0) {
         int active_idx = ws->active_col->active_win_idx;
         Window *w = &ws->active_col->windows[active_idx];
-        
         w->x = 0;
         w->y = top_padding;
         w->w = ws->screen_w;
@@ -21,21 +48,40 @@ void workspace_recalculate(Workspace *ws) {
         return;
     }
 
-    // Modo Tiling Normal
+    // Se a coluna ativa estiver maximizada, alinha a câmera nela
+    if (ws->active_col && ws->active_col->is_maximized) {
+        workspace_center_on_column(ws, ws->active_col);
+    }
+
     int current_x = -ws->camera_x;
     for (Column *col = ws->first_col; col != NULL; col = col->next) {
-        int usable_h = avail_h - ((col->window_count + 1) * ws->gap);
-        int win_h = usable_h / col->window_count;
-        int current_y = top_padding + ws->gap;
+        if (col->is_maximized && col->window_count > 0) {
+            // Janela ativa ganha 100% da LARGURA e 100% da ALTURA
+            int active_idx = col->active_win_idx;
+            for (int i = 0; i < col->window_count; i++) {
+                Window *w = &col->windows[i];
+                if (i == active_idx) {
+                    w->x = current_x + ws->gap;
+                    w->y = top_padding + ws->gap;
+                    w->w = col->width - (2 * ws->gap); // Largura total
+                    w->h = avail_h - (2 * ws->gap);    // Altura total
+                }
+            }
+        } else {
+            // Layout de mosaico normal
+            int usable_h = avail_h - ((col->window_count + 1) * ws->gap);
+            int win_h = usable_h / col->window_count;
+            int current_y = top_padding + ws->gap;
 
-        for (int i = 0; i < col->window_count; i++) {
-            Window *w = &col->windows[i];
-            w->x = current_x + ws->gap;
-            w->y = current_y;
-            w->w = col->width - (2 * ws->gap);
-            w->h = win_h;
+            for (int i = 0; i < col->window_count; i++) {
+                Window *w = &col->windows[i];
+                w->x = current_x + ws->gap;
+                w->y = current_y;
+                w->w = col->width - (2 * ws->gap);
+                w->h = win_h;
 
-            current_y += win_h + ws->gap;
+                current_y += win_h + ws->gap;
+            }
         }
         current_x += col->width;
     }
@@ -65,7 +111,7 @@ void workspace_focus_column(Workspace *ws, Column *target) {
     }
 
     ws->camera_x = target_camera_x;
-    workspace_recalculate(ws);
+    workspace_recalculate(ws, 0);
 }
 
 void workspace_insert_column_after(Workspace *ws, Column *new_col, Column *target) {
@@ -113,21 +159,11 @@ void workspace_remove_column(Workspace *ws, Column *target) {
         } else {
             ws->active_col = NULL;
             ws->camera_x = 0;
-            workspace_recalculate(ws);
+            workspace_recalculate(ws, 0);
         }
     } else {
-        workspace_recalculate(ws);
+        workspace_recalculate(ws, 0);
     }
-}
-
-void column_focus_next_window(Column *col) {
-    if (!col || col->window_count <= 1) return;
-    col->active_win_idx = (col->active_win_idx + 1) % col->window_count;
-}
-
-void column_focus_prev_window(Column *col) {
-    if (!col || col->window_count <= 1) return;
-    col->active_win_idx = (col->active_win_idx - 1 + col->window_count) % col->window_count;
 }
 
 void workspace_remove_window_by_id(Workspace *ws, uint32_t win_id) {
@@ -153,7 +189,7 @@ void workspace_remove_window_by_id(Workspace *ws, uint32_t win_id) {
                     col->active_win_idx = col->window_count - 1;
                 }
 
-                workspace_recalculate(ws);
+                workspace_recalculate(ws, 0);
                 return;
             }
         }
@@ -178,7 +214,7 @@ void workspace_consume_next_column(Workspace *ws) {
     free(next->windows);
     free(next);
 
-    workspace_recalculate(ws);
+    workspace_recalculate(ws, 0);
 }
 
 void workspace_expel_active_window(Workspace *ws) {
@@ -245,4 +281,33 @@ void workspace_add_window(Workspace *ws, uint32_t win_id) {
     // Insere a coluna no workspace e passa o foco para ela
     workspace_insert_column_after(ws, new_col, ws->active_col);
     workspace_focus_column(ws, new_col);
+}
+
+// Alterna o foco para a coluna à esquerda, recentrando a câmera nela
+// (sem isso, fora do fullscreen, a coluna focada pode ficar fora da tela)
+void workspace_focus_prev_column(Workspace *ws) {
+    if (!ws || !ws->active_col || !ws->active_col->prev) return;
+    workspace_focus_column(ws, ws->active_col->prev);
+}
+
+// Alterna o foco para a coluna à direita, recentrando a câmera nela
+void workspace_focus_next_column(Workspace *ws) {
+    if (!ws || !ws->active_col || !ws->active_col->next) return;
+    workspace_focus_column(ws, ws->active_col->next);
+}
+
+// Alterna o foco para a janela acima na coluna atual
+void column_focus_prev_window(Column *col) {
+    if (!col || col->window_count <= 1) return;
+    if (col->active_win_idx > 0) {
+        col->active_win_idx--;
+    }
+}
+
+// Alterna o foco para a janela abaixo na coluna atual
+void column_focus_next_window(Column *col) {
+    if (!col || col->window_count <= 1) return;
+    if (col->active_win_idx < col->window_count - 1) {
+        col->active_win_idx++;
+    }
 }
