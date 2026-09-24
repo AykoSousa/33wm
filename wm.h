@@ -1,10 +1,10 @@
-// wm.h
 #ifndef WM_H
 #define WM_H
 
 #include <xcb/xcb.h>
 #include <xcb/xcb_keysyms.h>
 #include "layout.h"
+#include "config.h"
 
 #define NUM_WORKSPACES 9
 
@@ -17,6 +17,8 @@ typedef struct {
     Workspace workspaces[NUM_WORKSPACES];
     int active_ws_idx;
     Workspace *ws;
+
+    Config config;
 
     xcb_atom_t atom_wm_protocols;
     xcb_atom_t atom_wm_delete_window;
@@ -39,10 +41,17 @@ void wm_close_active_window(WM *wm);
 
 void wm_switch_workspace(WM *wm, int target_idx);
 void wm_move_active_col_to_workspace(WM *wm, int target_idx);
-void spawn(const char *cmd);
+void spawn(WM *wm, const char *cmd);
 
 void ewmh_init(WM *wm);
 void ewmh_update_current_desktop(WM *wm);
 void wm_toggle_fullscreen(WM *wm);
+void wm_toggle_column_maximize(WM *wm);
+
+void wm_focus_prev_col(WM *wm);
+void wm_focus_next_col(WM *wm);
+void wm_focus_prev_win(WM *wm);
+void wm_focus_next_win(WM *wm);
+void wm_focus_active(WM *wm);
 
 #endif
