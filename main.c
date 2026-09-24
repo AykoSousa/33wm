@@ -31,6 +31,7 @@ int main(void) {
         fprintf(stderr, "Fatal error: ins't possible to init XCB layer.\n");
         return EXIT_FAILURE;
     }
+    config_load(&wm->config);
 
     global_wm = wm;
     printf("[WM] 33wm started. Waiting events from X server...\n");
