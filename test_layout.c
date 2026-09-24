@@ -22,7 +22,7 @@ void test_single_column_positioning() {
         .gap = 10
     };
 
-    workspace_recalculate(&ws);
+    workspace_recalculate(&ws, 0);
 
     assert(win1.x == 10);
     assert(win1.y == 10);
