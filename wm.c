@@ -7,6 +7,7 @@
 
 #define MOD XCB_MOD_MASK_4
 #define TERMINAL "konsole"   /* or "xterm", "alacritty", "kitty", "st" */
+#define LAUNCHER "rofi -show drun"  /* or "dmenu_run", "rofi -show run", etc. */
 
 #define BORDER_WIDTH 3
 #define COLOR_ACTIVE 0x7aa2f7  // Azul / Violeta
@@ -16,13 +17,23 @@
  * CapsLock = Lock, NumLock = Mod2 (na prática, em praticamente todo layout). */
 #define LOCK_MASKS (XCB_MOD_MASK_LOCK | XCB_MOD_MASK_2)
 
-void spawn(const char *cmd) {
+void spawn(WM *wm, const char *cmd) {
+    if (!cmd || strlen(cmd) == 0) return;
+
     if (fork() == 0) {
+        // No processo filho: fecha o fd da conexão XCB do WM
+        if (wm && wm->conn) {
+            close(xcb_get_file_descriptor(wm->conn));
+        }
+        // Cria uma nova sessão para desvincular do WM
         setsid();
-        char *args[] = {"/bin/sh", "-c", (char *)cmd, NULL};
-        execvp(args[0], args);
-        perror("Error to execute command via execvp");
-        exit(EXIT_FAILURE);
+        
+        // Executa o comando do launcher
+        execl("/bin/sh", "sh", "-c", cmd, (char *)NULL);
+        
+        // Se falhar o execl
+        perror("spawn failed");
+        _exit(1);
     }
 }
 
@@ -81,6 +92,10 @@ static void grab_keys(WM *wm) {
     grab_key(wm, XK_minus, MOD); // Super + - (Diminuir largura)
     grab_key(wm, XK_equal, MOD); // Super + = (Aumentar largura)
     grab_key(wm, XK_f, MOD); // Super + F (Fullscreen)
+    grab_key(wm, XK_d, MOD); // Super + D
+    grab_key(wm, XK_space, MOD);
+    grab_key(wm, XK_m, MOD);
+    grab_key(wm, XK_space, MOD);
 
     for (int i = 0; i < NUM_WORKSPACES; i++) {
         grab_key(wm, XK_1 + i, MOD);
@@ -180,9 +195,10 @@ WM* wm_init(void) {
         wm->workspaces[i].first_col = NULL;
         wm->workspaces[i].active_col = NULL;
         wm->workspaces[i].camera_x = 0;
+
         wm->workspaces[i].screen_w = wm->screen->width_in_pixels;
         wm->workspaces[i].screen_h = wm->screen->height_in_pixels;
-        wm->workspaces[i].gap = 12;
+        wm->workspaces[i].gap = wm->config.gap;
     }
     wm->active_ws_idx = 0;
     wm->ws = &wm->workspaces[0];
@@ -218,9 +234,8 @@ void wm_apply_layout(WM *wm) {
     Workspace *ws = wm->ws;
     if (!ws) return;
 
-    workspace_recalculate(ws);
+    workspace_recalculate(ws, wm->config.top_padding);
 
-    // Identifica a janela ativa atual (se existir)
     uint32_t active_win_id = 0;
     if (ws->active_col && ws->active_col->window_count > 0) {
         active_win_id = ws->active_col->windows[ws->active_col->active_win_idx].id;
@@ -232,34 +247,25 @@ void wm_apply_layout(WM *wm) {
 
             if (ws->is_fullscreen) {
                 if (win_id == active_win_id) {
-                    // Aplica tamanho em tela cheia e exibe
-                    uint32_t values[] = {
-                        col->windows[i].x,
-                        col->windows[i].y,
-                        col->windows[i].w,
-                        col->windows[i].h
-                    };
-                    xcb_configure_window(wm->conn, win_id,
-                        XCB_CONFIG_WINDOW_X | XCB_CONFIG_WINDOW_Y |
-                        XCB_CONFIG_WINDOW_WIDTH | XCB_CONFIG_WINDOW_HEIGHT,
-                        values);
+                    uint32_t values[] = { col->windows[i].x, col->windows[i].y, col->windows[i].w, col->windows[i].h };
+                    xcb_configure_window(wm->conn, win_id, XCB_CONFIG_WINDOW_X | XCB_CONFIG_WINDOW_Y | XCB_CONFIG_WINDOW_WIDTH | XCB_CONFIG_WINDOW_HEIGHT, values);
                     xcb_map_window(wm->conn, win_id);
                 } else {
-                    // Oculta janelas em segundo plano no modo fullscreen
+                    xcb_unmap_window(wm->conn, win_id);
+                }
+            } else if (col->is_maximized) {
+                // Se a coluna estiver maximizada, oculta as janelas que não são a ativa
+                if (i == col->active_win_idx) {
+                    uint32_t values[] = { col->windows[i].x, col->windows[i].y, col->windows[i].w, col->windows[i].h };
+                    xcb_configure_window(wm->conn, win_id, XCB_CONFIG_WINDOW_X | XCB_CONFIG_WINDOW_Y | XCB_CONFIG_WINDOW_WIDTH | XCB_CONFIG_WINDOW_HEIGHT, values);
+                    xcb_map_window(wm->conn, win_id);
+                } else {
                     xcb_unmap_window(wm->conn, win_id);
                 }
             } else {
-                // Aplica posição/tamanho normal do mosaico
-                uint32_t values[] = {
-                    col->windows[i].x,
-                    col->windows[i].y,
-                    col->windows[i].w,
-                    col->windows[i].h
-                };
-                xcb_configure_window(wm->conn, win_id,
-                    XCB_CONFIG_WINDOW_X | XCB_CONFIG_WINDOW_Y |
-                    XCB_CONFIG_WINDOW_WIDTH | XCB_CONFIG_WINDOW_HEIGHT,
-                    values);
+                // Modo normal de mosaico
+                uint32_t values[] = { col->windows[i].x, col->windows[i].y, col->windows[i].w, col->windows[i].h };
+                xcb_configure_window(wm->conn, win_id, XCB_CONFIG_WINDOW_X | XCB_CONFIG_WINDOW_Y | XCB_CONFIG_WINDOW_WIDTH | XCB_CONFIG_WINDOW_HEIGHT, values);
                 xcb_map_window(wm->conn, win_id);
             }
         }
@@ -269,15 +275,13 @@ void wm_apply_layout(WM *wm) {
 
 /* Dá o foco de teclado à janela da coluna ativa (ou de volta à root se
  * não houver nenhuma). Chamado sempre que a coluna ativa muda. */
-static void wm_focus_active(WM *wm) {
+void wm_focus_active(WM *wm) {
+    if (!wm || !wm->ws || !wm->ws->active_col) return;
     Column *col = wm->ws->active_col;
-    xcb_window_t target = wm->root;
+    if (col->window_count == 0) return;
 
-    if (col && col->window_count > 0) {
-        target = (xcb_window_t)col->windows[col->active_win_idx].id;
-    }
-
-    xcb_set_input_focus(wm->conn, XCB_INPUT_FOCUS_POINTER_ROOT, target, XCB_CURRENT_TIME);
+    uint32_t win_id = col->windows[col->active_win_idx].id;
+    xcb_set_input_focus(wm->conn, XCB_INPUT_FOCUS_POINTER_ROOT, win_id, XCB_CURRENT_TIME);
     xcb_flush(wm->conn);
 }
 
@@ -291,43 +295,68 @@ void wm_toggle_fullscreen(WM *wm) {
     wm_focus_active(wm);
 }
 
+void wm_toggle_column_maximize(WM *wm) {
+    if (!wm || !wm->ws || !wm->ws->active_col || wm->ws->is_fullscreen) return;
+    
+    column_toggle_maximize(wm->ws, wm->ws->active_col);
+    wm_apply_layout(wm);
+    wm_focus_active(wm);
+}
+
+void wm_focus_prev_col(WM *wm) {
+    // Se estiver em fullscreen, ignora a troca de janela (comportamento i3)
+    if (!wm || !wm->ws || wm->ws->is_fullscreen) return;
+    
+    workspace_focus_prev_column(wm->ws);
+    wm_apply_layout(wm);
+    wm_focus_active(wm);
+}
+
+void wm_focus_next_col(WM *wm) {
+    if (!wm || !wm->ws || wm->ws->is_fullscreen) return;
+    
+    workspace_focus_next_column(wm->ws);
+    wm_apply_layout(wm);
+    wm_focus_active(wm);
+}
+
+void wm_focus_prev_win(WM *wm) {
+    if (!wm || !wm->ws || !wm->ws->active_col || wm->ws->is_fullscreen) return;
+    
+    column_focus_prev_window(wm->ws->active_col);
+    wm_apply_layout(wm);
+    wm_focus_active(wm);
+}
+
+void wm_focus_next_win(WM *wm) {
+    if (!wm || !wm->ws || !wm->ws->active_col || wm->ws->is_fullscreen) return;
+    
+    column_focus_next_window(wm->ws->active_col);
+    wm_apply_layout(wm);
+    wm_focus_active(wm);
+}
+
 static void handle_key_press(WM *wm, xcb_key_press_event_t *ev) {
     uint16_t state = ev->state & ~LOCK_MASKS;
     xcb_keysym_t keysym = xcb_key_symbols_get_keysym(wm->keysyms, ev->detail, 0);
 
-    // Super + H (Esquerda)
+    // Super + H (Left)
     if (keysym == XK_h && state == MOD) {
-        if (wm->ws->active_col && wm->ws->active_col->prev) {
-            workspace_focus_column(wm->ws, wm->ws->active_col->prev);
-            wm_apply_layout(wm);
-            wm_focus_active(wm);
-        }
+        wm_focus_prev_col(wm);
     }
-    // Super + L (Direita)
+    // Super + L (Right)
     else if (keysym == XK_l && state == MOD) {
-        if (wm->ws->active_col && wm->ws->active_col->next) {
-            workspace_focus_column(wm->ws, wm->ws->active_col->next);
-            wm_apply_layout(wm);
-            wm_focus_active(wm);
-        }
+        wm_focus_next_col(wm);
     }
-    // Super + J (Abaixo)
+    // Super + J (Below)
     else if (keysym == XK_j && state == MOD) {
-        if (wm->ws->active_col) {
-            column_focus_next_window(wm->ws->active_col);
-            wm_apply_layout(wm);
-            wm_focus_active(wm);
-        }
+        wm_focus_next_win(wm);
     }
-    // Super + K (Acima)
+    // Super + K (Above)
     else if (keysym == XK_k && state == MOD) {
-        if (wm->ws->active_col) {
-            column_focus_prev_window(wm->ws->active_col);
-            wm_apply_layout(wm);
-            wm_focus_active(wm);
-        }
+        wm_focus_prev_win(wm);
     }
-    // Super + V (Consumir coluna da direita)
+    // Super + V (Catch right column)
     else if (keysym == XK_v && state == MOD) {
         workspace_consume_next_column(wm->ws);
         wm_apply_layout(wm);
@@ -340,7 +369,7 @@ static void handle_key_press(WM *wm, xcb_key_press_event_t *ev) {
         wm_focus_active(wm);
     }
     else if (keysym == XK_Return && state == MOD) {
-        spawn(TERMINAL);
+        spawn(wm, TERMINAL);
     }
     else if (keysym == XK_q && state == MOD) {
         wm_close_active_window(wm);
@@ -358,12 +387,13 @@ static void handle_key_press(WM *wm, xcb_key_press_event_t *ev) {
         wm_apply_layout(wm);
         wm_focus_active(wm);
     }
-    
-    if (keysym == XK_f && state == MOD) {
+    else if (keysym == XK_f && state == MOD) {
         wm_toggle_fullscreen(wm);
     }
-    
-    if (keysym >= XK_1 && keysym <= XK_9) {
+    else if (keysym == XK_m && state == MOD) {
+        wm_toggle_column_maximize(wm); // Super + M -> Maximiza janela na coluna
+    }
+    else if (keysym >= XK_1 && keysym <= XK_9) {
         int target_ws = keysym - XK_1;
 
         if (state == MOD) {
@@ -373,6 +403,8 @@ static void handle_key_press(WM *wm, xcb_key_press_event_t *ev) {
         else if (state == (MOD | XCB_MOD_MASK_SHIFT)) {
             wm_move_active_col_to_workspace(wm, target_ws);
         }
+    } else if (keysym == XK_space && state == MOD) {
+        spawn(wm, LAUNCHER);
     }
 }
 
