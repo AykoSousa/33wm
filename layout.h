@@ -8,6 +8,8 @@
 typedef struct {
     uint32_t id;
     int x, y, w, h;
+    bool mapped;          /* o WM acha que a janela está mapeada */
+    int pending_unmaps;   /* unmaps pedidos pelo WM ainda não recebidos como evento */
 } Window;
 
 typedef struct Column {
@@ -28,6 +30,7 @@ typedef struct {
     int screen_w;
     int screen_h;
     int gap;
+    int min_column_width;
     int is_fullscreen;
 } Workspace;
 

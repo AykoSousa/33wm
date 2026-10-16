@@ -1,12 +1,13 @@
 #!/usr/bin/env bash
 
-# Cores no formato hexadecimal
-BG_MAIN="#1a1b26"        # Fundo principal (Tokyo Night)
-FG_MAIN="#a9b1d6"        # Texto principal
-WS_ACTIVE_BG="#7aa2f7"   # Fundo do workspace ativo
-WS_ACTIVE_FG="#15161e"   # Texto do workspace ativo
-WS_INACTIVE_BG="#24283b" # Fundo dos workspaces inativos
-ACCENT="#bb9af7"        # Cor de destaque
+# Cores no formato hexadecimal. O 33wm passa os valores do arquivo de configuração
+# por variáveis de ambiente; sem elas, valem os padrões abaixo (Tokyo Night).
+BG_MAIN="${BAR_BG:-#1a1b26}"                    # Fundo principal
+FG_MAIN="${BAR_FG:-#a9b1d6}"                    # Texto principal
+WS_ACTIVE_BG="${WS_ACTIVE_BG:-#7aa2f7}"         # Fundo do workspace ativo
+WS_ACTIVE_FG="${WS_ACTIVE_FG:-#15161e}"         # Texto do workspace ativo
+WS_INACTIVE_BG="${WS_INACTIVE_BG:-#24283b}"     # Fundo dos workspaces inativos
+ACCENT="${BAR_ACCENT:-#bb9af7}"                 # Cor de destaque
 
 # 1. Coleta a memória RAM usada/total em GB
 get_ram() {
@@ -91,8 +92,16 @@ get_workspaces() {
     curr_ws=$(xprop -root _NET_CURRENT_DESKTOP 2>/dev/null | awk '{print $3}')
     [ -z "$curr_ws" ] && curr_ws=0
 
+    # Máscara de workspaces com janelas, publicada pelo WM (bit i = workspace i)
+    occupied=$(xprop -root _33WM_OCCUPIED 2>/dev/null | awk '{print $3}')
+    [[ "$occupied" =~ ^[0-9]+$ ]] || occupied=0
+
     ws_out=""
     for i in {0..8}; do
+        # Mostra só os workspaces com janelas e o ativo (dinâmico, como no niri)
+        if [ "$i" -ne "$curr_ws" ] && [ $(( (occupied >> i) & 1 )) -eq 0 ]; then
+            continue
+        fi
         ws_num=$((i + 1))
         # %{A1:xdotool set_desktop $i:} torna a área clicável (botão esquerdo = ação)
         if [ "$i" -eq "$curr_ws" ]; then

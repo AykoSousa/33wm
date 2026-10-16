@@ -1,0 +1,42 @@
+# Exemplo de configuração do 33wm
+# Copie para ~/.config/33wm/config (ou $XDG_CONFIG_HOME/33wm/config) e ajuste.
+# Formato: chave = valor. Linhas começando com '#' são comentários.
+# Valores inválidos ou chaves desconhecidas geram um aviso no stderr e usam o padrão.
+
+# Comandos
+terminal = konsole
+launcher = rofi -show drun -show-icons
+
+# Modificador dos atalhos: super (tecla Windows) ou alt
+mod = super
+
+# Layout (em pixels)
+gap = 4
+top_padding = 26              # espaço reservado no topo, deve bater com a altura da barra
+resize_step = 50              # quanto Super + '-' / '=' muda a largura da coluna
+min_column_width = 200        # largura mínima de uma coluna
+
+# Bordas (desenhadas por dentro do espaço do layout, como no i3). Cores em #RRGGBB.
+border_width = 1              # 0 = sem borda
+border_active = #7aa2f7       # janela focada
+border_inactive = #3b4252     # demais janelas
+
+# Teclas de mídia (sem modificador). Comando vazio = tecla desativada.
+volume_up_cmd = pactl set-sink-volume @DEFAULT_SINK@ +5%
+volume_down_cmd = pactl set-sink-volume @DEFAULT_SINK@ -5%
+volume_mute_cmd = pactl set-sink-mute @DEFAULT_SINK@ toggle
+mic_mute_cmd = pactl set-source-mute @DEFAULT_SOURCE@ toggle
+brightness_up_cmd = brightnessctl set +5%
+brightness_down_cmd = brightnessctl set 5%-
+media_play_cmd = playerctl play-pause
+media_next_cmd = playerctl next
+media_prev_cmd = playerctl previous
+
+# Barra (lemonbar). Cores em #RRGGBB.
+bar_font =                    # vazio = fonte padrão; ex.: Noto Sans:size=10
+bar_bg = #1a1b26
+bar_fg = #a9b1d6
+bar_accent = #bb9af7
+ws_active_bg = #7aa2f7
+ws_active_fg = #15161e
+ws_inactive_bg = #24283b
