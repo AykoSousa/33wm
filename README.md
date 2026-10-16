@@ -52,6 +52,18 @@ Xephyr :1 -screen 1280x800 -ac &
 DISPLAY=:1 ./33wm
 ```
 
+## Sessão (login)
+
+Com `sudo make install`, o 33wm aparece como sessão "33wm" no gerenciador de login (SDDM, LightDM...), pelo arquivo `/usr/local/share/xsessions/33wm.desktop`.
+
+Para sair da sessão pelo terminal:
+
+```sh
+pkill -x 33wm
+```
+
+O WM encerra com limpeza (a barra é encerrada junto) e a sessão X termina, voltando ao login. Se o terminal estiver dentro da própria sessão, funciona do mesmo jeito. Se a sessão travar, use Ctrl+Alt+F2 para abrir outro terminal e rode o mesmo comando.
+
 ## Atalhos
 
 O modificador padrão é Super (`mod = alt` na configuração troca para Alt).

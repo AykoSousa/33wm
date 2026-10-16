@@ -55,3 +55,4 @@ dkms.conf
 *.dwo
 # Binário do WM (make)
 /33wm
+/33wm.desktop
