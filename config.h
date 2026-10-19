@@ -37,6 +37,9 @@ typedef struct {
     uint32_t border_active;     /* cor da janela focada (0xRRGGBB) */
     uint32_t border_inactive;   /* cor das demais janelas */
 
+    /* Fundo da área de trabalho (cor sólida, 0xRRGGBB) */
+    uint32_t root_bg;
+
     /* Comandos das teclas de mídia (indexados por enum MediaCmd; vazio = tecla desativada) */
     char *media_cmd[MEDIA_COUNT];
 

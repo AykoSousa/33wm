@@ -21,6 +21,9 @@ border_width = 1              # 0 = sem borda
 border_active = #7aa2f7       # janela focada
 border_inactive = #3b4252     # demais janelas
 
+# Fundo da área de trabalho (cor sólida). Para uma imagem, use o autostart com feh.
+root_bg = #1a1b26
+
 # Teclas de mídia (sem modificador). Comando vazio = tecla desativada.
 volume_up_cmd = pactl set-sink-volume @DEFAULT_SINK@ +5%
 volume_down_cmd = pactl set-sink-volume @DEFAULT_SINK@ -5%

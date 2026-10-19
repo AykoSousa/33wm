@@ -79,6 +79,8 @@ void config_init_defaults(Config *config) {
     config->border_active = 0x7aa2f7;
     config->border_inactive = 0x3b4252;
 
+    config->root_bg = 0x1a1b26;
+
     config->bar_font = strdup("");
     config->bar_bg = strdup("#1a1b26");
     config->bar_fg = strdup("#a9b1d6");
@@ -147,6 +149,9 @@ static void apply_setting(Config *config, const char *key, const char *val, int 
     } else if (strcmp(key, "border_inactive") == 0) {
         if (!is_color(val)) goto invalid;
         config->border_inactive = parse_color(val);
+    } else if (strcmp(key, "root_bg") == 0) {
+        if (!is_color(val)) goto invalid;
+        config->root_bg = parse_color(val);
     } else if (strcmp(key, "bar_font") == 0) {
         // A fonte vai para a linha de comando do shell, então não pode ter aspas simples
         if (strchr(val, '\'') != NULL) goto invalid;

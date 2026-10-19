@@ -167,6 +167,15 @@ static void grab_buttons(WM *wm) {
     xcb_flush(wm->conn);
 }
 
+/* Pinta o fundo do root com a cor de root_bg. Sem isso, o servidor mostra o que sobrou
+ * na tela (ex.: a tela de login do SDDM). */
+static void apply_root_background(WM *wm) {
+    uint32_t bg = wm->config.root_bg;
+    xcb_change_window_attributes(wm->conn, wm->root, XCB_CW_BACK_PIXEL, &bg);
+    xcb_clear_area(wm->conn, 0, wm->root, 0, 0, 0, 0);
+    xcb_flush(wm->conn);
+}
+
 static xcb_atom_t get_atom(xcb_connection_t *conn, const char *name) {
     xcb_intern_atom_cookie_t cookie = xcb_intern_atom(conn, 0, strlen(name), name);
     xcb_intern_atom_reply_t *reply = xcb_intern_atom_reply(conn, cookie, NULL);
@@ -1243,6 +1252,7 @@ void wm_reload_settings(WM *wm) {
 
     grab_keys(wm);
     grab_buttons(wm);
+    apply_root_background(wm);
     wm_restart_bar(wm);
     wm_apply_layout(wm);
     wm_focus_active(wm);
@@ -1522,6 +1532,7 @@ WM* wm_init(void) {
 
     grab_keys(wm);
     grab_buttons(wm);
+    apply_root_background(wm);
     ewmh_init(wm);
     return wm;
 }
