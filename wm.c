@@ -647,9 +647,10 @@ void wm_toggle_column_maximize(WM *wm) {
     wm_focus_active(wm);
 }
 
+/* Em fullscreen o workspace continua em fullscreen: a janela que ganha o foco passa a ocupar
+ * a tela, pois apply_workspace mostra só a ativa. */
 void wm_focus_prev_col(WM *wm) {
-    // Se estiver em fullscreen, ignora a troca de janela (comportamento i3)
-    if (!wm || !wm->ws || wm->ws->is_fullscreen) return;
+    if (!wm || !wm->ws) return;
 
     workspace_focus_prev_column(wm->ws);
     wm_apply_layout(wm);
@@ -657,7 +658,7 @@ void wm_focus_prev_col(WM *wm) {
 }
 
 void wm_focus_next_col(WM *wm) {
-    if (!wm || !wm->ws || wm->ws->is_fullscreen) return;
+    if (!wm || !wm->ws) return;
 
     workspace_focus_next_column(wm->ws);
     wm_apply_layout(wm);
@@ -665,7 +666,7 @@ void wm_focus_next_col(WM *wm) {
 }
 
 void wm_focus_prev_win(WM *wm) {
-    if (!wm || !wm->ws || !wm->ws->active_col || wm->ws->is_fullscreen) return;
+    if (!wm || !wm->ws || !wm->ws->active_col) return;
 
     column_focus_prev_window(wm->ws->active_col);
     wm_apply_layout(wm);
@@ -673,7 +674,7 @@ void wm_focus_prev_win(WM *wm) {
 }
 
 void wm_focus_next_win(WM *wm) {
-    if (!wm || !wm->ws || !wm->ws->active_col || wm->ws->is_fullscreen) return;
+    if (!wm || !wm->ws || !wm->ws->active_col) return;
 
     column_focus_next_window(wm->ws->active_col);
     wm_apply_layout(wm);
