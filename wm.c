@@ -117,6 +117,10 @@ static void grab_keys(WM *wm) {
     grab_key(wm, XK_v, wm->mod | XCB_MOD_MASK_SHIFT); // Super + Shift + V (Expulsar janela)
     grab_key(wm, XK_j, wm->mod); // Super + J (Foco abaixo)
     grab_key(wm, XK_k, wm->mod); // Super + K (Foco acima)
+    grab_key(wm, XK_Left, wm->mod);  // Super + seta esquerda (mesmo que H)
+    grab_key(wm, XK_Right, wm->mod); // Super + seta direita (mesmo que L)
+    grab_key(wm, XK_Down, wm->mod);  // Super + seta abaixo (mesmo que J)
+    grab_key(wm, XK_Up, wm->mod);    // Super + seta acima (mesmo que K)
     grab_key(wm, XK_minus, wm->mod); // Super + - (Diminuir largura)
     grab_key(wm, XK_equal, wm->mod); // Super + = (Aumentar largura)
     grab_key(wm, XK_f, wm->mod); // Super + F (Fullscreen)
@@ -695,20 +699,20 @@ void wm_move_col_to_monitor(WM *wm, int delta) {
 }
 
 static void dispatch_key(WM *wm, xcb_keysym_t keysym, uint16_t state) {
-    // Super + H (Left)
-    if (keysym == XK_h && state == wm->mod) {
+    // Super + H ou seta esquerda (Left)
+    if ((keysym == XK_h || keysym == XK_Left) && state == wm->mod) {
         wm_focus_prev_col(wm);
     }
-    // Super + L (Right)
-    else if (keysym == XK_l && state == wm->mod) {
+    // Super + L ou seta direita (Right)
+    else if ((keysym == XK_l || keysym == XK_Right) && state == wm->mod) {
         wm_focus_next_col(wm);
     }
-    // Super + J (Below)
-    else if (keysym == XK_j && state == wm->mod) {
+    // Super + J ou seta abaixo (Below)
+    else if ((keysym == XK_j || keysym == XK_Down) && state == wm->mod) {
         wm_focus_next_win(wm);
     }
-    // Super + K (Above)
-    else if (keysym == XK_k && state == wm->mod) {
+    // Super + K ou seta acima (Above)
+    else if ((keysym == XK_k || keysym == XK_Up) && state == wm->mod) {
         wm_focus_prev_win(wm);
     }
     // Super + V (Catch right column)
@@ -929,6 +933,28 @@ static void float_focus(WM *wm, xcb_window_t win) {
     wm_focus_active(wm);
 }
 
+/* Clique (botão 1 ou 3, sem modificador) numa janela gerenciada: um grab passivo na própria
+ * janela entrega o clique ao WM antes do app. O clique é devolvido depois (ReplayPointer),
+ * então o app o recebe normalmente. Com Super o grab do root tem prioridade e nada muda. */
+static void grab_click_to_focus(WM *wm, xcb_window_t win) {
+    const uint16_t extra[4] = {
+        0,
+        XCB_MOD_MASK_LOCK,
+        XCB_MOD_MASK_2,
+        XCB_MOD_MASK_LOCK | XCB_MOD_MASK_2
+    };
+    const xcb_button_index_t buttons[2] = { XCB_BUTTON_INDEX_1, XCB_BUTTON_INDEX_3 };
+
+    for (int b = 0; b < 2; b++) {
+        for (int j = 0; j < 4; j++) {
+            xcb_grab_button(wm->conn, 0, win, XCB_EVENT_MASK_BUTTON_PRESS,
+                            XCB_GRAB_MODE_SYNC, XCB_GRAB_MODE_ASYNC,
+                            XCB_NONE, XCB_NONE, buttons[b], extra[j]);
+        }
+    }
+    xcb_flush(wm->conn);
+}
+
 static void handle_map_request(WM *wm, xcb_map_request_event_t *ev) {
     // Consulta os atributos da janela que solicitou ser exibida
     xcb_get_window_attributes_cookie_t cookie = xcb_get_window_attributes(wm->conn, ev->window);
@@ -950,12 +976,14 @@ static void handle_map_request(WM *wm, xcb_map_request_event_t *ev) {
         FloatWin *f = float_add(wm, ev->window);
         if (f) {
             float_place(wm, f);
+            grab_click_to_focus(wm, ev->window);
             float_focus(wm, ev->window);
         }
         return;
     }
 
     // Janela comum (ex: terminal, navegador): adiciona ao layout. O layout a mostra.
+    grab_click_to_focus(wm, ev->window);
     workspace_add_window(wm->ws, ev->window);
     wm_apply_layout(wm);
     wm_focus_active(wm);
@@ -1124,9 +1152,44 @@ static void handle_client_message(WM *wm, xcb_client_message_event_t *ev) {
     }
 }
 
-/* Super + botão 1/3 sobre uma janela flutuante: começa a mover/redimensionar.
- * Janelas em coluna não são arrastadas. */
+/* Foca a janela clicada: se for flutuante, ela ganha o foco; se for de coluna, a coluna e
+ * a janela viram as ativas (trocando de monitor se necessário). */
+static void focus_clicked_window(WM *wm, xcb_window_t win) {
+    if (float_find(wm, win)) {
+        float_focus(wm, win);
+        return;
+    }
+
+    int ws_idx;
+    Column *col;
+    int idx;
+    if (!find_tiled(wm, win, &ws_idx, &col, &idx)) return;
+
+    for (int m = 0; m < wm->monitor_count; m++) {
+        if (wm->monitors[m].ws == ws_idx && m != wm->focused_mon) {
+            set_focus_monitor(wm, m);
+            break;
+        }
+    }
+
+    wm->focus_float = 0;
+    col->active_win_idx = idx;
+    workspace_focus_column(wm->ws, col);
+    wm_apply_layout(wm);
+    wm_focus_active(wm);
+}
+
+/* Botão 1/3 sobre uma janela flutuante com Super: começa a mover/redimensionar (janelas em
+ * coluna não são arrastadas). Clique sem Super numa janela gerenciada: só foca. */
 static void handle_button_press(WM *wm, xcb_button_press_event_t *ev) {
+    // Clique numa janela gerenciada (grab da própria janela): foca e devolve o clique ao app
+    if (ev->event != wm->root) {
+        focus_clicked_window(wm, ev->event);
+        xcb_allow_events(wm->conn, XCB_ALLOW_REPLAY_POINTER, ev->time);
+        xcb_flush(wm->conn);
+        return;
+    }
+
     if (wm->drag.active || ev->child == 0) return;
 
     FloatWin *f = float_find(wm, ev->child);

@@ -70,8 +70,9 @@ O modificador padrão é Super (`mod = alt` na configuração troca para Alt).
 
 | Atalho | Ação |
 | --- | --- |
-| Super + H / L | Foco na coluna à esquerda / direita |
-| Super + J / K | Foco na janela abaixo / acima da coluna |
+| Super + H / L (ou setas ←/→) | Foco na coluna à esquerda / direita |
+| Super + J / K (ou setas ↓/↑) | Foco na janela abaixo / acima da coluna |
+| Clique (botão 1 ou 3) numa janela | Foca a janela clicada (o clique também chega ao app) |
 | Super + V | Puxa a próxima coluna para a ativa |
 | Super + Shift + V | Expulsa a janela ativa para uma nova coluna |
 | Super + - / = | Diminui / aumenta a largura da coluna (`resize_step`) |
@@ -126,7 +127,7 @@ Com mais de um monitor, uma coluna que não cabe inteira no monitor (cortada pel
 
 - Workspaces vazios não aparecem na barra, então não dá para clicar neles. Use Super + número.
 - Sem timeout para forçar o fechamento: o segundo Super + Q é o que força.
-- O mouse só move e redimensiona janelas flutuantes. Janelas em coluna não são arrastadas, e não há foco por clique.
+- O mouse move e redimensiona só janelas flutuantes. Janelas em coluna não são arrastadas (só recebem foco por clique).
 - A detecção de monitores e a troca de monitor foram testadas com monitores simulados (no Xephyr, que não oferece dois monitores reais). Conectar ou remover um monitor com o WM rodando não foi testado de verdade.
 
 ## Testes
