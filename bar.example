@@ -1,0 +1,28 @@
+# Exemplo de configuração da barra do 33wm
+# Copie para ~/.config/33wm/bar (ou $XDG_CONFIG_HOME/33wm/bar) e ajuste.
+# Formato: chave = valor. Linhas começando com '#' são comentários. Cores em #RRGGBB.
+# A barra relê o arquivo a cada segundo: as mudanças valem na hora. Valores inválidos ou
+# chaves desconhecidas geram um aviso no stderr da barra e usam o padrão.
+
+# Altura e fonte. A altura deve bater com top_padding no config do WM (o espaço reservado).
+height = 26
+font =                                  # vazio = fonte padrão; ex.: Noto Sans:size=10
+
+# Cores (nomes parecidos com os do i3bar)
+background = #1a1b26
+statusline = #a9b1d6                    # texto
+accent = #bb9af7                        # rótulos: RAM:, CPU:
+focused_workspace_bg = #7aa2f7          # workspace ativo
+focused_workspace_fg = #15161e
+inactive_workspace_bg = #24283b         # workspaces com janelas
+inactive_workspace_fg = #a9b1d6
+
+# Separador entre os módulos da direita e formato da data (strftime, sem as aspas)
+separator = |
+clock_format = %d/%m/%Y %H:%M
+
+# Módulos por lado, na ordem em que aparecem. Remova um nome para escondê-lo.
+# Disponíveis: workspaces ram cpu volume mic bluetooth battery network clock
+# (workspaces é o normal à esquerda; os demais, à direita).
+modules_left = workspaces
+modules_right = ram cpu volume mic bluetooth battery network clock

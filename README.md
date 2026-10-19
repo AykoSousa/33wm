@@ -2,7 +2,7 @@
 
 Gerenciador de janelas em mosaico com colunas rolantes (inspirado no niri), para X11, escrito em C com XCB.
 
-Tem barra própria (lemonbar + `bar.sh`), workspaces dinâmicos, janelas flutuantes para diálogos, bordas no estilo i3 e configuração por arquivo.
+Tem barra própria (lemonbar, em `bar/33bar`, configurável sem recompilar), workspaces dinâmicos, janelas flutuantes para diálogos, bordas no estilo i3 e configuração por arquivo.
 
 ## Dependências (Void Linux)
 
@@ -16,24 +16,29 @@ Execução:
 
 ```sh
 sudo xbps-install -S xorg-server xinit lemonbar-xft xdotool xprop iproute2 wireless_tools rofi konsole \
-  pulseaudio-utils brightnessctl playerctl
+  wireplumber pulseaudio-utils bluez brightnessctl playerctl
 ```
 
-- `lemonbar-xft`: a barra (o `lemonbar` comum não renderiza bem os emojis do `bar.sh`).
+- `lemonbar-xft`: a barra (o `lemonbar` comum não renderiza bem os emojis da barra).
 - `xdotool`: cliques nos workspaces da barra.
 - `xprop`: lido pela barra para os workspaces.
 - `iproute2` (`ip`) e `wireless_tools` (`iwgetid`): rede na barra.
+- `bluez` (`bluetoothctl`): dispositivos Bluetooth conectados na barra.
 - `rofi`: launcher padrão. `konsole`: terminal padrão. Ambos são configuráveis.
-- `pulseaudio-utils` (`pactl`), `brightnessctl` e `playerctl`: comandos padrão das teclas de mídia.
+- `wireplumber` (`wpctl`): volume e microfone na barra, direto pelo PipeWire.
+- `pulseaudio-utils` (`pactl`), `brightnessctl` e `playerctl`: comandos padrão das teclas de mídia. Sem o `wpctl`, o `pactl` mostra volume e microfone na barra.
 - `xorg-server-xephyr` é opcional, para testar o WM numa janela.
 
 ## Compilar e instalar
 
 ```sh
 make                              # gera ./33wm
-sudo make install                 # instala em /usr/local (bin/33wm e share/33wm/bar.sh)
+sudo make install                 # instala em /usr/local (bin/33wm e share/33wm/33bar)
 make PREFIX=$HOME/.local install  # instalação no diretório do usuário
+sudo make install-bar             # só a barra (sem recompilar o WM)
 ```
+
+A barra é um script à parte (`bar/33bar`). Rodando o WM do diretório do projeto, ele usa `bar/33bar` daqui, então mudanças no script valem sem instalar nada. Para uma instalação, `make install-bar` copia só o script.
 
 `make clean` remove os objetos e o binário.
 
@@ -94,7 +99,8 @@ Teclas de mídia (sem modificador): volume, mute do som, mute do microfone, bril
 
 Arquivos em `$XDG_CONFIG_HOME/33wm/` (ou `~/.config/33wm/`):
 
-- `config`: opções do WM, da barra e das bordas. Veja `config.example`, que lista todas as chaves com os padrões.
+- `config`: opções do WM, das bordas e das teclas. Veja `config.example`, que lista todas as chaves com os padrões.
+- `bar`: a barra (cores, altura, fonte e módulos). Veja `bar.example`.
 - `autostart`: uma linha por comando, executado ao iniciar o WM. Linhas com `#` e vazias são ignoradas.
 
 ```sh
@@ -105,14 +111,14 @@ printf 'nm-applet\n' > ~/.config/33wm/autostart
 
 Valores inválidos ou chaves desconhecidas geram um aviso no stderr e usam o padrão.
 
-Para aplicar mudanças sem reiniciar o WM, envie SIGHUP: `pkill -HUP -x 33wm`. Isso relê a configuração, reaplica as teclas e reinicia a barra. As janelas continuam como estavam.
+Para aplicar mudanças sem reiniciar o WM, envie SIGHUP: `pkill -HUP -x 33wm`. Isso relê o `config`, reaplica as teclas e o layout. As janelas continuam como estavam. A barra não precisa de SIGHUP: ela relê o próprio arquivo `bar` sozinha.
 
 Para desativar uma tecla de mídia, deixe o comando vazio (ex.: `brightness_up_cmd =`).
 
 ## Comportamento
 
 - **Layout:** colunas rolantes. A coluna ativa fica centralizada, sem deixar espaço vazio nas bordas.
-- **Barra:** o `bar.sh` roda no lemonbar e mostra só os workspaces com janelas e o ativo. A barra é reiniciada se morrer e é encerrada junto com o WM.
+- **Barra:** o `bar/33bar` roda no lemonbar, com a posição do monitor principal passada pelo WM. Ele relê `~/.config/33wm/bar` a cada segundo: cores, fonte, separador e módulos mudam na hora, e o lemonbar só é reiniciado quando a posição, a altura ou a fonte mudam. Por padrão mostra os workspaces com janelas e o ativo, à esquerda, e RAM, CPU, volume, microfone, Bluetooth, bateria, rede e relógio, à direita. A barra é reiniciada se morrer e é encerrada junto com o WM.
 - **Janelas flutuantes:** diálogos, utilitários, splash, toolbars e janelas com `WM_TRANSIENT_FOR` ficam fora do layout, centralizadas no workspace onde abriram.
 - **Tamanho mínimo:** o WM respeita `WM_NORMAL_HINTS` (tamanho mínimo e incrementos, como em terminais).
 - **EWMH:** o WM publica `_NET_ACTIVE_WINDOW`, `_NET_CLIENT_LIST`, `_NET_CURRENT_DESKTOP` e o estado de tela cheia pedido pelos apps (`_NET_WM_STATE_FULLSCREEN`).

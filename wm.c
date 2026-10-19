@@ -10,9 +10,9 @@
 #include <xcb/randr.h>
 #include "wm.h"
 
-/* Onde o `make install` põe o bar.sh (usado quando ele não está ao lado do executável) */
+/* Onde o `make install` põe a barra (usada quando ela não está ao lado do executável) */
 #ifndef BAR_SCRIPT
-#define BAR_SCRIPT "/usr/local/share/33wm/bar.sh"
+#define BAR_SCRIPT "/usr/local/share/33wm/33bar"
 #endif
 
 /* Modificadores de "lock" que não devem influenciar os atalhos:
@@ -48,8 +48,8 @@ pid_t spawn(WM *wm, const char *cmd) {
         // Cria uma nova sessão para desvincular do WM (e o grupo serve para encerrar a barra)
         setsid();
 
-        // O WM ignora SIGPIPE; os programas filhos têm que receber o padrão (ex.: o bar.sh
-        // precisa morrer quando o lemonbar fecha)
+        // O WM ignora SIGPIPE; os programas filhos têm que receber o padrão (ex.: um pipeline
+        // que deve morrer quando o programa da ponta fecha)
         signal(SIGPIPE, SIG_DFL);
 
         execl("/bin/sh", "sh", "-c", cmd, (char *)NULL);
@@ -369,6 +369,24 @@ static int monitor_showing(const WM *wm, int ws) {
         if (wm->monitors[m].ws == ws) return m;
     }
     return -1;
+}
+
+// Índice do monitor que contém o ponto (x, y) da tela, ou -1 se nenhum
+static int monitor_at(const WM *wm, int x, int y) {
+    for (int m = 0; m < wm->monitor_count; m++) {
+        const Monitor *mon = &wm->monitors[m];
+        if (x >= mon->x && x < mon->x + mon->w && y >= mon->y && y < mon->y + mon->h) return m;
+    }
+    return -1;
+}
+
+// Índice do monitor onde a janela está (pelo centro dela), ou -1 se nenhum
+static int monitor_of_window(WM *wm, xcb_window_t win) {
+    xcb_get_geometry_reply_t *g = xcb_get_geometry_reply(wm->conn, xcb_get_geometry(wm->conn, win), NULL);
+    if (!g) return -1;
+    int m = monitor_at(wm, g->x + g->width / 2, g->y + g->height / 2);
+    free(g);
+    return m;
 }
 
 // Foca o monitor m: o workspace dele passa a ser o ativo (teclas, criação de janelas)
@@ -1157,6 +1175,13 @@ static void handle_client_message(WM *wm, xcb_client_message_event_t *ev) {
  * a janela viram as ativas (trocando de monitor se necessário). */
 static void focus_clicked_window(WM *wm, xcb_window_t win) {
     if (float_find(wm, win)) {
+        // Janela flutuante num monitor que não é o focado: o foco passa para ele, como no clique
+        // em coluna, para que as próximas janelas abram ali
+        int m = monitor_of_window(wm, win);
+        if (m >= 0 && m != wm->focused_mon) {
+            set_focus_monitor(wm, m);
+            wm_apply_layout(wm);
+        }
         float_focus(wm, win);
         return;
     }
@@ -1189,6 +1214,17 @@ static void handle_button_press(WM *wm, xcb_button_press_event_t *ev) {
         xcb_allow_events(wm->conn, XCB_ALLOW_REPLAY_POINTER, ev->time);
         xcb_flush(wm->conn);
         return;
+    }
+
+    // Clique no fundo de um monitor (sem janela): o foco passa para esse monitor
+    if (!wm->drag.active && ev->child == 0) {
+        int m = monitor_at(wm, ev->root_x, ev->root_y);
+        if (m >= 0 && m != wm->focused_mon) {
+            wm->focus_float = 0;
+            set_focus_monitor(wm, m);
+            wm_apply_layout(wm);
+            wm_focus_active(wm);
+        }
     }
 
     if (wm->drag.active || ev->child == 0) return;
@@ -1247,7 +1283,7 @@ static void handle_button_release(WM *wm, xcb_button_release_event_t *ev) {
 
 /* ---------- Barra e recarga ---------- */
 
-/* Caminho do bar.sh: ao lado do executável (desenvolvimento) ou o instalado */
+/* Caminho da barra: bar/33bar ao lado do executável (desenvolvimento) ou o instalado */
 static void bar_script_path(char *out, size_t size) {
     char exe[512];
     ssize_t len = readlink("/proc/self/exe", exe, sizeof(exe) - 1);
@@ -1256,37 +1292,27 @@ static void bar_script_path(char *out, size_t size) {
         char *slash = strrchr(exe, '/');
         if (slash) {
             *slash = '\0';
-            snprintf(out, size, "%s/bar.sh", exe);
-            if (access(out, R_OK) == 0) return;
+            snprintf(out, size, "%s/bar/33bar", exe);
+            if (access(out, X_OK) == 0) return;
         }
     }
     snprintf(out, size, "%s", BAR_SCRIPT);
 }
 
-/* Inicia a barra no monitor principal: bar.sh alimentando o lemonbar no topo.
- * A altura da barra é o top_padding, o mesmo espaço que o layout reserva.
- * O laço reinicia a barra se o lemonbar morrer (o bar.sh morre junto, por SIGPIPE). */
+/* Inicia a barra no monitor principal. A barra é um programa à parte (bar/33bar), com a
+ * própria configuração: o WM só passa a posição do monitor. O laço reinicia a barra se ela
+ * morrer. A altura da barra deve bater com o top_padding, o espaço que o layout reserva. */
 void wm_start_bar(WM *wm) {
     char script[1024];
     bar_script_path(script, sizeof(script));
 
     const Monitor *mon = &wm->monitors[0];
-    const Config *c = &wm->config;
 
-    char font_arg[256] = "";
-    if (c->bar_font[0] != '\0') {
-        snprintf(font_arg, sizeof(font_arg), " -f '%s'", c->bar_font);
-    }
-
-    // As cores vão como variáveis de ambiente lidas pelo bar.sh
-    char cmd[3072];
+    char cmd[1536];
     int n = snprintf(cmd, sizeof(cmd),
-             "while :; do "
-             "BAR_BG='%s' BAR_FG='%s' BAR_ACCENT='%s' WS_ACTIVE_BG='%s' WS_ACTIVE_FG='%s' WS_INACTIVE_BG='%s' "
-             "'%s' | lemonbar -g %dx%d+%d+%d -B '%s' -F '%s'%s; "
-             "sleep 1; done",
-             c->bar_bg, c->bar_fg, c->bar_accent, c->ws_active_bg, c->ws_active_fg, c->ws_inactive_bg,
-             script, mon->w, c->top_padding, mon->x, mon->y, c->bar_bg, c->bar_fg, font_arg);
+             "export BAR_X=%d BAR_Y=%d BAR_W=%d; "
+             "while :; do '%s'; sleep 1; done",
+             mon->x, mon->y, mon->w, script);
     if (n < 0 || (size_t)n >= sizeof(cmd)) {
         fprintf(stderr, "[WM] bar: comando da barra longo demais\n");
         return;
@@ -1303,7 +1329,8 @@ static void wm_restart_bar(WM *wm) {
 }
 
 /* SIGHUP: relê o arquivo de configuração e aplica sem reiniciar o WM. As janelas
- * continuam como estavam; só mudam as opções (teclas, cores, gap, barra...). */
+ * continuam como estavam; só mudam as opções (teclas, cores, gap...). A barra não é
+ * reiniciada: ela relê o próprio arquivo (~/.config/33wm/bar). */
 void wm_reload_settings(WM *wm) {
     config_free(&wm->config);
     config_load(&wm->config);
@@ -1317,7 +1344,6 @@ void wm_reload_settings(WM *wm) {
     grab_keys(wm);
     grab_buttons(wm);
     apply_root_background(wm);
-    wm_restart_bar(wm);
     wm_apply_layout(wm);
     wm_focus_active(wm);
     fprintf(stderr, "[WM] configuração recarregada\n");
@@ -1412,7 +1438,7 @@ void wm_run(WM *wm, int wake_fd) {
 
 void wm_cleanup(WM *wm) {
     if (!wm) return;
-    // A barra roda em grupo próprio (setsid): encerra o grupo inteiro (supervisor, bar.sh e lemonbar)
+    // A barra roda em grupo próprio (setsid): encerra o grupo inteiro (supervisor, 33bar e lemonbar)
     if (wm->bar_pid > 0) {
         kill(-wm->bar_pid, SIGTERM);
     }
@@ -1572,8 +1598,11 @@ WM* wm_init(void) {
     wm->atom_wm_protocols = get_atom(wm->conn, "WM_PROTOCOLS");
     wm->atom_wm_delete_window = get_atom(wm->conn, "WM_DELETE_WINDOW");
 
+    /* BUTTON_PRESS no root: clique no fundo de um monitor (sem janela) chega ao WM, que foca
+     * esse monitor. Sem isso, só o clique com Super (grab) chegava. */
     uint32_t values[1] = {
-        XCB_EVENT_MASK_SUBSTRUCTURE_REDIRECT | XCB_EVENT_MASK_SUBSTRUCTURE_NOTIFY
+        XCB_EVENT_MASK_SUBSTRUCTURE_REDIRECT | XCB_EVENT_MASK_SUBSTRUCTURE_NOTIFY |
+        XCB_EVENT_MASK_BUTTON_PRESS
     };
 
     xcb_void_cookie_t cookie = xcb_change_window_attributes_checked(

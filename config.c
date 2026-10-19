@@ -80,14 +80,6 @@ void config_init_defaults(Config *config) {
     config->border_inactive = 0x3b4252;
 
     config->root_bg = 0x1a1b26;
-
-    config->bar_font = strdup("");
-    config->bar_bg = strdup("#1a1b26");
-    config->bar_fg = strdup("#a9b1d6");
-    config->bar_accent = strdup("#bb9af7");
-    config->ws_active_bg = strdup("#7aa2f7");
-    config->ws_active_fg = strdup("#15161e");
-    config->ws_inactive_bg = strdup("#24283b");
 }
 
 void config_free(Config *config) {
@@ -98,13 +90,6 @@ void config_free(Config *config) {
     free(config->terminal_cmd);
     free(config->launcher_cmd);
     free(config->mod);
-    free(config->bar_font);
-    free(config->bar_bg);
-    free(config->bar_fg);
-    free(config->bar_accent);
-    free(config->ws_active_bg);
-    free(config->ws_active_fg);
-    free(config->ws_inactive_bg);
 }
 
 // Aplica uma linha "chave = valor". Valores inválidos mantêm o padrão e geram aviso.
@@ -152,28 +137,9 @@ static void apply_setting(Config *config, const char *key, const char *val, int 
     } else if (strcmp(key, "root_bg") == 0) {
         if (!is_color(val)) goto invalid;
         config->root_bg = parse_color(val);
-    } else if (strcmp(key, "bar_font") == 0) {
-        // A fonte vai para a linha de comando do shell, então não pode ter aspas simples
-        if (strchr(val, '\'') != NULL) goto invalid;
-        set_str(&config->bar_font, val);
-    } else if (strcmp(key, "bar_bg") == 0) {
-        if (!is_color(val)) goto invalid;
-        set_str(&config->bar_bg, val);
-    } else if (strcmp(key, "bar_fg") == 0) {
-        if (!is_color(val)) goto invalid;
-        set_str(&config->bar_fg, val);
-    } else if (strcmp(key, "bar_accent") == 0) {
-        if (!is_color(val)) goto invalid;
-        set_str(&config->bar_accent, val);
-    } else if (strcmp(key, "ws_active_bg") == 0) {
-        if (!is_color(val)) goto invalid;
-        set_str(&config->ws_active_bg, val);
-    } else if (strcmp(key, "ws_active_fg") == 0) {
-        if (!is_color(val)) goto invalid;
-        set_str(&config->ws_active_fg, val);
-    } else if (strcmp(key, "ws_inactive_bg") == 0) {
-        if (!is_color(val)) goto invalid;
-        set_str(&config->ws_inactive_bg, val);
+    } else if (strncmp(key, "bar_", 4) == 0 || strncmp(key, "ws_", 3) == 0) {
+        fprintf(stderr, "[config] linha %d: '%s' agora fica no arquivo da barra (~/.config/33wm/bar)\n",
+                lineno, key);
     } else {
         fprintf(stderr, "[config] linha %d: chave desconhecida '%s' (ignorada)\n", lineno, key);
     }

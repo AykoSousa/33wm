@@ -43,14 +43,6 @@ typedef struct {
     /* Comandos das teclas de mídia (indexados por enum MediaCmd; vazio = tecla desativada) */
     char *media_cmd[MEDIA_COUNT];
 
-    /* Barra (lemonbar + bar.sh) */
-    char *bar_font;        /* vazio = fonte padrão do lemonbar */
-    char *bar_bg;
-    char *bar_fg;
-    char *bar_accent;
-    char *ws_active_bg;
-    char *ws_active_fg;
-    char *ws_inactive_bg;
 } Config;
 
 void config_init_defaults(Config *config);

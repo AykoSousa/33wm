@@ -12,7 +12,7 @@ mod = super
 
 # Layout (em pixels)
 gap = 4
-top_padding = 26              # espaço reservado no topo, deve bater com a altura da barra
+top_padding = 26              # espaço reservado no topo, deve bater com 'height' no arquivo da barra
 resize_step = 50              # quanto Super + '-' / '=' muda a largura da coluna
 min_column_width = 200        # largura mínima de uma coluna
 
@@ -35,11 +35,5 @@ media_play_cmd = playerctl play-pause
 media_next_cmd = playerctl next
 media_prev_cmd = playerctl previous
 
-# Barra (lemonbar). Cores em #RRGGBB.
-bar_font =                    # vazio = fonte padrão; ex.: Noto Sans:size=10
-bar_bg = #1a1b26
-bar_fg = #a9b1d6
-bar_accent = #bb9af7
-ws_active_bg = #7aa2f7
-ws_active_fg = #15161e
-ws_inactive_bg = #24283b
+# A barra não fica aqui: tem o próprio arquivo, ~/.config/33wm/bar (veja bar.example).
+# Ela é relida sozinha ao salvar, sem recompilar nem reiniciar o WM.

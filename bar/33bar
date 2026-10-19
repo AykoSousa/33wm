@@ -1,0 +1,482 @@
+#!/usr/bin/env bash
+
+# Barra do 33wm (lemonbar), separada do WM. Para ajustar a barra, edite ~/.config/33wm/bar:
+# o arquivo é relido a cada segundo e as mudanças valem na hora. Só o lemonbar é reiniciado,
+# e só quando a posição, a altura, a fonte ou as cores de fundo e texto mudam.
+# Fora do 33wm, o monitor vem de BAR_X, BAR_Y e BAR_W (padrão: 0, 0 e 1920).
+
+CONFIG_FILE="${XDG_CONFIG_HOME:-$HOME/.config}/33wm/bar"
+config_raw=""
+config_loaded=0
+
+# Posição do monitor principal, passada pelo WM
+BAR_X=${BAR_X:-0}
+BAR_Y=${BAR_Y:-0}
+BAR_W=${BAR_W:-1920}
+
+# Valores padrão (Tokyo Night). Os nomes das cores seguem o i3bar (focused_workspace...).
+set_defaults() {
+    height=26
+    font=""
+    background="#1a1b26"
+    statusline="#a9b1d6"
+    accent="#bb9af7"
+    focused_workspace_bg="#7aa2f7"
+    focused_workspace_fg="#15161e"
+    inactive_workspace_bg="#24283b"
+    inactive_workspace_fg="#a9b1d6"
+    separator="|"
+    clock_format="%d/%m/%Y %H:%M"
+    modules_left="workspaces"
+    modules_right="ram cpu volume mic bluetooth battery network clock"
+}
+
+warn() {
+    echo "[bar] $*" >&2
+}
+
+is_color() {
+    [[ "$1" =~ ^#[0-9a-fA-F]{6}$ ]]
+}
+
+# Tira espaços das pontas de $1 sem fork; o resultado vai para TRIMMED
+trim() {
+    TRIMMED=$1
+    TRIMMED=${TRIMMED#"${TRIMMED%%[![:space:]]*}"}
+    TRIMMED=${TRIMMED%"${TRIMMED##*[![:space:]]}"}
+}
+
+# Filtra uma lista de módulos (nomes separados por espaço); os desconhecidos são avisados e
+# descartados. O resultado vai para MODULES.
+valid_modules() {
+    local name ok=""
+    for name in $1; do
+        if declare -F "mod_$name" >/dev/null; then
+            ok+="$name "
+        else
+            warn "módulo desconhecido '$name' (ignorado)"
+        fi
+    done
+    MODULES=${ok% }
+}
+
+# Aplica "chave = valor" (linha $3 do arquivo, para o aviso). Valor inválido mantém o padrão.
+apply_setting() {
+    local key=$1 val=$2 lineno=$3
+
+    case "$key" in
+        font) font=$val ;;
+        height)
+            if [[ "$val" =~ ^[0-9]+$ ]] && [ "$val" -gt 0 ]; then
+                height=$val
+            else
+                warn "linha $lineno: valor inválido para '$key': '$val' (usando padrão)"
+            fi
+            ;;
+        background | statusline | accent | focused_workspace_bg | focused_workspace_fg | \
+        inactive_workspace_bg | inactive_workspace_fg)
+            if is_color "$val"; then
+                printf -v "$key" '%s' "$val"
+            else
+                warn "linha $lineno: valor inválido para '$key': '$val' (usando padrão)"
+            fi
+            ;;
+        separator) separator=$val ;;
+        clock_format) clock_format=$val ;;
+        modules_left | modules_right)
+            valid_modules "$val"
+            printf -v "$key" '%s' "$MODULES"
+            ;;
+        *)
+            warn "linha $lineno: chave desconhecida '$key' (ignorada)"
+            ;;
+    esac
+}
+
+# Relê o arquivo quando ele muda. Sem arquivo, valem os padrões.
+load_config() {
+    local raw="" line key val lineno=0
+
+    [ -r "$CONFIG_FILE" ] && raw=$(<"$CONFIG_FILE")
+    if [ "$config_loaded" -eq 1 ] && [ "$raw" = "$config_raw" ]; then
+        return
+    fi
+    config_loaded=1
+    config_raw=$raw
+
+    set_defaults
+    while IFS= read -r line; do
+        lineno=$((lineno + 1))
+
+        # Comentário no fim da linha: '#' seguido de espaço, no início ou depois de espaço.
+        # Cores (#1a1b26) não são afetadas, pois não têm espaço depois do '#'.
+        if [[ "$line" =~ (^|[[:space:]])#([[:space:]]|$) ]]; then
+            line=${line%%"${BASH_REMATCH[0]}"*}
+        fi
+
+        trim "$line"
+        line=$TRIMMED
+        [ -z "$line" ] && continue
+
+        if [[ "$line" != *=* ]]; then
+            warn "linha $lineno: formato inválido, esperado 'chave = valor'"
+            continue
+        fi
+
+        key=${line%%=*}
+        val=${line#*=}
+        trim "$key"
+        key=$TRIMMED
+        trim "$val"
+        val=$TRIMMED
+
+        apply_setting "$key" "$val" "$lineno"
+    done <<< "$raw"
+}
+
+# ---------- Processo do lemonbar ----------
+
+# O lemonbar roda como coprocesso: a barra escreve nele pela entrada padrão.
+# applied_key guarda a posição, a altura, a fonte e as cores com que ele foi iniciado.
+LEMON_PID=0
+applied_key=""
+
+compute_key() {
+    KEY="${BAR_W}x${height}+${BAR_X}+${BAR_Y}|${font}|${background}|${statusline}"
+}
+
+start_lemonbar() {
+    local font_args=()
+    [ -n "$font" ] && font_args=(-f "$font")
+
+    compute_key
+    applied_key=$KEY
+    coproc LEMON {
+        trap - PIPE
+        exec lemonbar -g "${BAR_W}x${height}+${BAR_X}+${BAR_Y}" -B "$background" -F "$statusline" \
+            "${font_args[@]}"
+    }
+}
+
+stop_lemonbar() {
+    if [ "${LEMON_PID:-0}" -gt 0 ]; then
+        kill "$LEMON_PID" 2>/dev/null
+        wait "$LEMON_PID" 2>/dev/null
+    fi
+    if [ -n "${LEMON[1]:-}" ]; then
+        eval "exec ${LEMON[0]}<&- ${LEMON[1]}>&-"
+    fi
+    unset LEMON
+    LEMON_PID=0
+    applied_key=""
+}
+
+# Inicia o lemonbar se ele não está rodando ou se a configuração de janela mudou
+ensure_lemonbar() {
+    compute_key
+    if [ -n "$applied_key" ] && [ "$KEY" = "$applied_key" ] && kill -0 "$LEMON_PID" 2>/dev/null; then
+        return
+    fi
+    stop_lemonbar
+    start_lemonbar
+}
+
+# ---------- Módulos ----------
+# Cada módulo grava o texto em OUT (vazio = não mostra o módulo).
+
+# Último estado lido de /proc/stat: o uso sai da diferença entre dois ciclos do laço
+cpu_prev_idle=0
+cpu_prev_total=0
+
+# Workspaces (à esquerda): só os com janelas e o ativo. O 33wm publica a máscara dos
+# ocupados e o workspace ativo como propriedades do root.
+mod_workspaces() {
+    local line curr_ws=0 occupied=0 i ws_num
+
+    while read -r line; do
+        case "$line" in
+            _NET_CURRENT_DESKTOP*) curr_ws=${line##* } ;;
+            _33WM_OCCUPIED*) occupied=${line##* } ;;
+        esac
+    done < <(xprop -root _NET_CURRENT_DESKTOP _33WM_OCCUPIED 2>/dev/null)
+
+    [[ "$curr_ws" =~ ^[0-9]+$ ]] || curr_ws=0
+    [[ "$occupied" =~ ^[0-9]+$ ]] || occupied=0
+
+    OUT=""
+    for i in {0..8}; do
+        if [ "$i" -ne "$curr_ws" ] && [ $(( (occupied >> i) & 1 )) -eq 0 ]; then
+            continue
+        fi
+        ws_num=$((i + 1))
+        # %{A1:xdotool set_desktop $i:} torna a área clicável (botão esquerdo = ação)
+        if [ "$i" -eq "$curr_ws" ]; then
+            OUT+="%{A1:xdotool set_desktop $i:}%{B$focused_workspace_bg}%{F$focused_workspace_fg} $ws_num %{F-}%{B-}%{A} "
+        else
+            OUT+="%{A1:xdotool set_desktop $i:}%{B$inactive_workspace_bg}%{F$inactive_workspace_fg} $ws_num %{F-}%{B-}%{A} "
+        fi
+    done
+}
+
+# RAM usada/total em GB (uma casa decimal, em aritmética inteira)
+mod_ram() {
+    local key val total=0 avail=0
+    while read -r key val _; do
+        case "$key" in
+            MemTotal:) total=$val ;;
+            MemAvailable:) avail=$val ;;
+        esac
+    done < /proc/meminfo
+
+    # Décimos de GB arredondados (como o %.1f do awk que antes fazia isso)
+    local used_t=$(( ((total - avail) * 10 + 524288) / 1048576 ))
+    local total_t=$(( (total * 10 + 524288) / 1048576 ))
+    OUT="%{F$accent}RAM:%{F-} $((used_t / 10)).$((used_t % 10))GB/$((total_t / 10)).$((total_t % 10))GB"
+}
+
+# Uso do processador, do sistema inteiro
+mod_cpu() {
+    local _ user nice system idle iowait irq softirq steal
+    read -r _ user nice system idle iowait irq softirq steal _ < /proc/stat
+    local idle_now=$((idle + iowait))
+    local total_now=$((user + nice + system + idle + iowait + irq + softirq + steal))
+
+    local diff_idle=$((idle_now - cpu_prev_idle))
+    local diff_total=$((total_now - cpu_prev_total))
+    cpu_prev_idle=$idle_now
+    cpu_prev_total=$total_now
+
+    local cpu=0
+    if [ "$diff_total" -gt 0 ]; then
+        cpu=$(( (100 * (diff_total - diff_idle)) / diff_total ))
+    fi
+    OUT="%{F$accent}CPU:%{F-} ${cpu}%"
+}
+
+# Porcentagem e status da bateria
+mod_battery() {
+    local bat_path="/sys/class/power_supply/BAT0"
+    [ ! -d "$bat_path" ] && bat_path="/sys/class/power_supply/BAT1"
+
+    if [ -d "$bat_path" ]; then
+        local cap=0 status=Discharging
+        read -r cap 2>/dev/null < "$bat_path/capacity" || cap=0
+        read -r status 2>/dev/null < "$bat_path/status" || status=Discharging
+        if [ "$status" = "Charging" ]; then
+            OUT="BAT ${cap}% (carregando)"
+        else
+            OUT="BAT ${cap}%"
+        fi
+    else
+        OUT="AC"
+    fi
+}
+
+# Nome da rede Wi-Fi, consultado a cada 10 ciclos (o SSID muda raramente)
+net_ssid="Wi-Fi"
+net_ssid_ttl=0
+
+# Rede conectada (Wi-Fi com SSID e sinal, ou cabo). A interface vem da rota padrão em
+# /proc/net/route (destino 00000000)
+mod_network() {
+    local iface="" name dest _rest wname wstatus wlink wlevel dbm=-100 quality
+    while read -r name dest _rest; do
+        if [ "$dest" = "00000000" ]; then
+            iface=$name
+            break
+        fi
+    done < /proc/net/route
+
+    if [ -z "$iface" ]; then
+        OUT="❌ Off"
+        return
+    fi
+
+    if [[ "$iface" == w* ]]; then
+        if [ "$net_ssid_ttl" -le 0 ]; then
+            net_ssid=$(iwgetid -r 2>/dev/null)
+            [ -z "$net_ssid" ] && net_ssid="Wi-Fi"
+            net_ssid_ttl=10
+        fi
+        net_ssid_ttl=$((net_ssid_ttl - 1))
+
+        # Nível do sinal em dBm (/proc/net/wireless), convertido para 0-100% com 2 * (dBm + 100)
+        while read -r wname wstatus wlink wlevel _; do
+            if [ "$wname" = "$iface:" ]; then
+                dbm=${wlevel%.}
+                break
+            fi
+        done < /proc/net/wireless
+        [[ "$dbm" =~ ^-?[0-9]+$ ]] || dbm=-100
+        quality=$(( 2 * (dbm + 100) ))
+        [ "$quality" -gt 100 ] && quality=100
+        [ "$quality" -lt 0 ] && quality=0
+
+        OUT="📶 $net_ssid ${quality}%"
+    else
+        OUT="🔌 Cabo ($iface)"
+    fi
+}
+
+# Volume (%) e mudo do áudio, em AUDIO_VOL e AUDIO_MUTED. Uso: audio_state sink|source
+# O wpctl fala direto com o PipeWire; sem ele (ou sem o PipeWire), cai no pactl (PulseAudio).
+audio_state() {
+    local kind=$1 val rest line dev vol="" muted=no
+
+    if command -v wpctl >/dev/null; then
+        read -r _ val rest < <(wpctl get-volume "@DEFAULT_AUDIO_${kind^^}@" 2>/dev/null)
+        # Sai como "Volume: 0.40" (duas casas), com " [MUTED]" quando mudo
+        if [[ "$val" =~ ^[0-9]+\.[0-9]{2}$ ]]; then
+            vol=$((10#${val/./}))
+            [[ "$rest" == *MUTED* ]] && muted=yes
+        fi
+    fi
+
+    if [ -z "$vol" ]; then
+        dev=@DEFAULT_SINK@
+        [ "$kind" = source ] && dev=@DEFAULT_SOURCE@
+        while read -r line; do
+            if [[ "$line" =~ ([0-9]+)% ]]; then
+                vol=${BASH_REMATCH[1]}
+                break
+            fi
+        done < <(pactl "get-$kind-volume" "$dev" 2>/dev/null)
+
+        while read -r line; do
+            muted=${line##* }
+        done < <(pactl "get-$kind-mute" "$dev" 2>/dev/null)
+    fi
+
+    AUDIO_VOL=$vol
+    AUDIO_MUTED=$muted
+}
+
+# Volume da saída padrão: VOL 65%, com "(mudo)" quando mudo
+mod_volume() {
+    audio_state sink
+    if [ -z "$AUDIO_VOL" ]; then
+        OUT="VOL --"
+    elif [ "$AUDIO_MUTED" = yes ]; then
+        OUT="VOL ${AUDIO_VOL}% (mudo)"
+    else
+        OUT="VOL ${AUDIO_VOL}%"
+    fi
+}
+
+# Volume da fonte padrão (microfone): MIC 80%, com "(mudo)" quando mudo
+mod_mic() {
+    audio_state source
+    if [ -z "$AUDIO_VOL" ]; then
+        OUT="MIC --"
+    elif [ "$AUDIO_MUTED" = yes ]; then
+        OUT="MIC ${AUDIO_VOL}% (mudo)"
+    else
+        OUT="MIC ${AUDIO_VOL}%"
+    fi
+}
+
+# Dispositivos Bluetooth conectados, consultados a cada 10 ciclos (como o SSID, que muda pouco)
+bt_ttl=0
+bt_powered=0
+bt_count=0
+bt_first=""
+
+# Bluetooth. A presença e o bloqueio do adaptador vêm do rfkill (/sys, sem fork); energia e
+# dispositivos conectados vêm do bluetoothctl, a cada 10 ciclos. Sem adaptador, some da barra.
+mod_bluetooth() {
+    local dir type soft hard key val _ mac name found=0 blocked=0
+
+    for dir in /sys/class/rfkill/rfkill*; do
+        read -r type 2>/dev/null < "$dir/type" || continue
+        [ "$type" = bluetooth ] || continue
+        found=1
+        read -r soft 2>/dev/null < "$dir/soft" || soft=0
+        read -r hard 2>/dev/null < "$dir/hard" || hard=0
+        [ "$soft$hard" = 00 ] || blocked=1
+    done
+
+    if [ "$found" -eq 0 ]; then
+        OUT=""
+        return
+    fi
+
+    if [ "$blocked" -eq 1 ]; then
+        OUT="🔵 desligado"
+        return
+    fi
+
+    if [ "$bt_ttl" -le 0 ]; then
+        bt_powered=0
+        while read -r key val; do
+            [ "$key" = "Powered:" ] && [ "$val" = yes ] && bt_powered=1
+        done < <(bluetoothctl show 2>/dev/null)
+
+        bt_count=0
+        bt_first=""
+        while read -r _ mac name; do
+            bt_count=$((bt_count + 1))
+            if [ -z "$bt_first" ]; then
+                bt_first=$name
+            fi
+        done < <(bluetoothctl devices Connected 2>/dev/null)
+        bt_ttl=10
+    fi
+    bt_ttl=$((bt_ttl - 1))
+
+    if [ "$bt_powered" -eq 0 ]; then
+        OUT="🔵 desligado"
+    elif [ "$bt_count" -eq 0 ]; then
+        OUT="🔵 ligado"
+    elif [ "$bt_count" -eq 1 ]; then
+        OUT="🔵 $bt_first"
+    else
+        OUT="🔵 $bt_first +$((bt_count - 1))"
+    fi
+}
+
+# Data e hora, no formato clock_format (o printf do bash formata sem chamar o comando date)
+mod_clock() {
+    printf -v OUT "📅 %(${clock_format})T" -1
+}
+
+# Monta a lista de módulos (nomes separados por espaço) em RENDERED. Módulo sem texto some
+# junto com o separador. Os da esquerda usam o separador vazio, os da direita, $separator.
+render_list() {
+    local name text=""
+    for name in $1; do
+        OUT=""
+        "mod_$name"
+        [ -z "$OUT" ] && continue
+        [ -n "$text" ] && text+="${2:+ $2 }"
+        text+=$OUT
+    done
+    RENDERED=$text
+}
+
+# ---------- Laço principal ----------
+
+# Escrever num lemonbar morto dá SIGPIPE, que mataria a barra. Ignorado aqui: o printf falha
+# e o lemonbar é reiniciado no ciclo seguinte.
+trap '' PIPE
+trap 'stop_lemonbar; exit 0' INT TERM HUP
+
+load_config
+# Primeira leitura de /proc/stat: o próximo ciclo já tem um intervalo para calcular o uso
+mod_cpu
+sleep 1
+
+while :; do
+    load_config
+    ensure_lemonbar
+
+    render_list "$modules_left" ""
+    left=$RENDERED
+    render_list "$modules_right" "$separator"
+    right=$RENDERED
+
+    # Sintaxe do Lemonbar:
+    # %{l} = Alinhado à esquerda | %{c} = Alinhado ao centro | %{r} = Alinhado à direita
+    printf '%s\n' "%{l} ${left} %{r} ${right} " >&"${LEMON[1]}" || applied_key=""
+
+    sleep 1
+done
