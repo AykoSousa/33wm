@@ -1,0 +1,7 @@
+[Desktop Entry]
+Name=33wm
+Comment=Gerenciador de janelas em colunas rolantes (inspirado no niri)
+Exec=@BINDIR@/33wm
+TryExec=@BINDIR@/33wm
+Type=XSession
+DesktopNames=33wm

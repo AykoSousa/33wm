@@ -12,6 +12,21 @@ static void workspace_center_on_column(Workspace *ws, Column *target) {
     ws->camera_x = col_x;
 }
 
+// Mantém a câmera dentro do conteúdo, para não sobrar espaço vazio na tela.
+// Se o conteúdo for menor que a tela, a câmera fica alinhada à esquerda.
+static void workspace_clamp_camera(Workspace *ws) {
+    int total_w = 0;
+    for (Column *c = ws->first_col; c != NULL; c = c->next) {
+        total_w += c->width;
+    }
+
+    int max_camera = total_w - ws->screen_w;
+    if (max_camera < 0) max_camera = 0;
+
+    if (ws->camera_x > max_camera) ws->camera_x = max_camera;
+    if (ws->camera_x < 0) ws->camera_x = 0;
+}
+
 void column_toggle_maximize(Workspace *ws, Column *col) {
     if (!col || !ws) return;
 
@@ -52,6 +67,8 @@ void workspace_recalculate(Workspace *ws, int top_padding) {
     if (ws->active_col && ws->active_col->is_maximized) {
         workspace_center_on_column(ws, ws->active_col);
     }
+
+    workspace_clamp_camera(ws);
 
     int current_x = -ws->camera_x;
     for (Column *col = ws->first_col; col != NULL; col = col->next) {
@@ -247,7 +264,7 @@ void workspace_expel_active_window(Workspace *ws) {
 void workspace_resize_active_column(Workspace *ws, int delta) {
     if (!ws || !ws->active_col) return;
 
-    int min_width = 200;
+    int min_width = ws->min_column_width;
     int max_width = ws->screen_w;
 
     int new_width = ws->active_col->width + delta;
@@ -270,6 +287,8 @@ void workspace_add_window(Workspace *ws, uint32_t win_id) {
     win_arr[0].y = 0;
     win_arr[0].w = 0;
     win_arr[0].h = 0;
+    win_arr[0].mapped = false;
+    win_arr[0].pending_unmaps = 0;
 
     // Cria a coluna para essa janela (com largura padrão de metade da tela)
     Column *new_col = calloc(1, sizeof(Column));

@@ -4,6 +4,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <ctype.h>
+#include <stdbool.h>
 #include <sys/stat.h>
 #include "config.h"
 
@@ -16,61 +17,192 @@ static char *trim(char *str) {
     return str;
 }
 
+static void set_str(char **field, const char *val) {
+    free(*field);
+    *field = strdup(val);
+}
+
+// Converte val em inteiro (>= min). Retorna false se o valor for inválido.
+static bool parse_int(const char *val, int min, int *out) {
+    char *end;
+    long n = strtol(val, &end, 10);
+    if (end == val || *end != '\0' || n < min || n > 100000) return false;
+    *out = (int)n;
+    return true;
+}
+
+// Aceita cores no formato #RRGGBB
+static bool is_color(const char *val) {
+    if (val[0] != '#' || strlen(val) != 7) return false;
+    for (int i = 1; i < 7; i++) {
+        if (!isxdigit((unsigned char)val[i])) return false;
+    }
+    return true;
+}
+
+// Converte uma cor já validada (#RRGGBB) para 0xRRGGBB
+static uint32_t parse_color(const char *val) {
+    return (uint32_t)strtoul(val + 1, NULL, 16);
+}
+
+/* Chave do arquivo e comando padrão de cada tecla de mídia, na ordem de enum MediaCmd */
+static const struct {
+    const char *key;
+    const char *def;
+} media_defs[MEDIA_COUNT] = {
+    { "volume_up_cmd",       "pactl set-sink-volume @DEFAULT_SINK@ +5%" },
+    { "volume_down_cmd",     "pactl set-sink-volume @DEFAULT_SINK@ -5%" },
+    { "volume_mute_cmd",     "pactl set-sink-mute @DEFAULT_SINK@ toggle" },
+    { "mic_mute_cmd",        "pactl set-source-mute @DEFAULT_SOURCE@ toggle" },
+    { "brightness_up_cmd",   "brightnessctl set +5%" },
+    { "brightness_down_cmd", "brightnessctl set 5%-" },
+    { "media_play_cmd",      "playerctl play-pause" },
+    { "media_next_cmd",      "playerctl next" },
+    { "media_prev_cmd",      "playerctl previous" },
+};
+
 void config_init_defaults(Config *config) {
     if (!config) return;
-    config->launcher_cmd = strdup("rofi -show drun -show-icons");
+    for (int i = 0; i < MEDIA_COUNT; i++) {
+        config->media_cmd[i] = strdup(media_defs[i].def);
+    }
     config->terminal_cmd = strdup("konsole");
+    config->launcher_cmd = strdup("rofi -show drun -show-icons");
+    config->mod = strdup("super");
+
     config->gap = 8;
     config->top_padding = 26;
+    config->resize_step = 50;
+    config->min_column_width = 200;
+
+    config->border_width = 1;
+    config->border_active = 0x7aa2f7;
+    config->border_inactive = 0x3b4252;
+
+    config->root_bg = 0x1a1b26;
 }
 
 void config_free(Config *config) {
     if (!config) return;
-    if (config->launcher_cmd) free(config->launcher_cmd);
-    if (config->terminal_cmd) free(config->terminal_cmd);
+    for (int i = 0; i < MEDIA_COUNT; i++) {
+        free(config->media_cmd[i]);
+    }
+    free(config->terminal_cmd);
+    free(config->launcher_cmd);
+    free(config->mod);
+}
+
+// Aplica uma linha "chave = valor". Valores inválidos mantêm o padrão e geram aviso.
+static void apply_setting(Config *config, const char *key, const char *val, int lineno) {
+    int n;
+
+    for (int i = 0; i < MEDIA_COUNT; i++) {
+        if (strcmp(key, media_defs[i].key) == 0) {
+            set_str(&config->media_cmd[i], val);
+            return;
+        }
+    }
+
+    if (strcmp(key, "terminal") == 0) {
+        set_str(&config->terminal_cmd, val);
+    } else if (strcmp(key, "launcher") == 0) {
+        set_str(&config->launcher_cmd, val);
+    } else if (strcmp(key, "mod") == 0) {
+        if (strcmp(val, "super") == 0 || strcmp(val, "alt") == 0) {
+            set_str(&config->mod, val);
+        } else {
+            goto invalid;
+        }
+    } else if (strcmp(key, "gap") == 0) {
+        if (!parse_int(val, 0, &n)) goto invalid;
+        config->gap = n;
+    } else if (strcmp(key, "top_padding") == 0) {
+        if (!parse_int(val, 0, &n)) goto invalid;
+        config->top_padding = n;
+    } else if (strcmp(key, "resize_step") == 0) {
+        if (!parse_int(val, 1, &n)) goto invalid;
+        config->resize_step = n;
+    } else if (strcmp(key, "min_column_width") == 0) {
+        if (!parse_int(val, 1, &n)) goto invalid;
+        config->min_column_width = n;
+    } else if (strcmp(key, "border_width") == 0) {
+        if (!parse_int(val, 0, &n)) goto invalid;
+        config->border_width = n;
+    } else if (strcmp(key, "border_active") == 0) {
+        if (!is_color(val)) goto invalid;
+        config->border_active = parse_color(val);
+    } else if (strcmp(key, "border_inactive") == 0) {
+        if (!is_color(val)) goto invalid;
+        config->border_inactive = parse_color(val);
+    } else if (strcmp(key, "root_bg") == 0) {
+        if (!is_color(val)) goto invalid;
+        config->root_bg = parse_color(val);
+    } else if (strncmp(key, "bar_", 4) == 0 || strncmp(key, "ws_", 3) == 0) {
+        fprintf(stderr, "[config] linha %d: '%s' agora fica no arquivo da barra (~/.config/33wm/bar)\n",
+                lineno, key);
+    } else {
+        fprintf(stderr, "[config] linha %d: chave desconhecida '%s' (ignorada)\n", lineno, key);
+    }
+    return;
+
+invalid:
+    fprintf(stderr, "[config] linha %d: valor inválido para '%s': '%s' (usando padrão)\n",
+            lineno, key, val);
+}
+
+int config_file_path(const char *name, char *out, size_t size) {
+    const char *xdg_config = getenv("XDG_CONFIG_HOME");
+    const char *home = getenv("HOME");
+    int n;
+
+    if (xdg_config && strlen(xdg_config) > 0) {
+        n = snprintf(out, size, "%s/33wm/%s", xdg_config, name);
+    } else if (home && strlen(home) > 0) {
+        n = snprintf(out, size, "%s/.config/33wm/%s", home, name);
+    } else {
+        return -1;
+    }
+    return (n < 0 || (size_t)n >= size) ? -1 : 0;
 }
 
 void config_load(Config *config) {
     config_init_defaults(config);
 
     char path[512];
-    const char *xdg_config = getenv("XDG_CONFIG_HOME");
-    const char *home = getenv("HOME");
-
-    if (xdg_config && strlen(xdg_config) > 0) {
-        snprintf(path, sizeof(path), "%s/33wm/config", xdg_config);
-    } else if (home && strlen(home) > 0) {
-        snprintf(path, sizeof(path), "%s/.config/33wm/config", home);
-    } else {
-        return;
-    }
+    if (config_file_path("config", path, sizeof(path)) != 0) return;
 
     FILE *file = fopen(path, "r");
     if (!file) return;
 
-    char line[256];
+    char line[512];
+    int lineno = 0;
     while (fgets(line, sizeof(line), file)) {
+        lineno++;
         char *trimmed = trim(line);
         if (trimmed[0] == '#' || trimmed[0] == '\0') continue;
 
         char *eq = strchr(trimmed, '=');
-        if (!eq) continue;
+        if (!eq) {
+            fprintf(stderr, "[config] linha %d: formato inválido, esperado 'chave = valor'\n", lineno);
+            continue;
+        }
 
         *eq = '\0';
         char *key = trim(trimmed);
         char *val = trim(eq + 1);
 
-        if (strcmp(key, "terminal") == 0) {
-            free(config->terminal_cmd);
-            config->terminal_cmd = strdup(val);
-        } else if (strcmp(key, "launcher") == 0) {
-            free(config->launcher_cmd);
-            config->launcher_cmd = strdup(val);
-        } else if (strcmp(key, "gap") == 0) {
-            config->gap = atoi(val);
-        } else if (strcmp(key, "top_padding") == 0) {
-            config->top_padding = atoi(val);
+        // Comentário no fim da linha: '#' seguido de espaço e no início do valor ou
+        // precedido de espaço. Cores (#1a1b26) não são afetadas, pois não têm espaço após o '#'.
+        for (char *p = val; *p; p++) {
+            if (*p == '#' && (p == val || isspace((unsigned char)p[-1])) &&
+                (p[1] == '\0' || isspace((unsigned char)p[1]))) {
+                *p = '\0';
+                val = trim(val);
+                break;
+            }
         }
+
+        apply_setting(config, key, val, lineno);
     }
 
     fclose(file);
