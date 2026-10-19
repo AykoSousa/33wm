@@ -426,7 +426,7 @@ mod_bluetooth() {
     if [ "$bt_powered" -eq 0 ]; then
         OUT="🔵 desligado"
     elif [ "$bt_count" -eq 0 ]; then
-        OUT="🔵 ligado"
+        OUT="🔵 sem dispositivos"
     elif [ "$bt_count" -eq 1 ]; then
         OUT="🔵 $bt_first"
     else
@@ -447,6 +447,11 @@ render_list() {
         OUT=""
         "mod_$name"
         [ -z "$OUT" ] && continue
+        # Clique (botão esquerdo) abre o programa de controle do módulo
+        case "$name" in
+            volume | mic) OUT="%{A1:pavucontrol:}$OUT%{A}" ;;
+            bluetooth) OUT="%{A1:alacritty -e bluetui:}$OUT%{A}" ;;
+        esac
         [ -n "$text" ] && text+="${2:+ $2 }"
         text+=$OUT
     done
