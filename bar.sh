@@ -9,8 +9,12 @@ WS_ACTIVE_FG="${WS_ACTIVE_FG:-#15161e}"         # Texto do workspace ativo
 WS_INACTIVE_BG="${WS_INACTIVE_BG:-#24283b}"     # Fundo dos workspaces inativos
 ACCENT="${BAR_ACCENT:-#bb9af7}"                 # Cor de destaque
 
-# 1. Coleta a memória RAM usada/total em GB
+# Os coletores gravam o resultado em variáveis (sem $(...)) e leem /proc e /sys direto.
+# Cada $(...) ou comando externo vira um fork a cada segundo, então só sobra o necessário.
+
+# 1. Coleta a memória RAM usada/total em GB (uma casa decimal, em aritmética inteira)
 get_ram() {
+    local key val total=0 avail=0
     while read -r key val _; do
         case "$key" in
             MemTotal:) total=$val ;;
@@ -18,85 +22,109 @@ get_ram() {
         esac
     done < /proc/meminfo
 
-    used_kb=$((total - avail))
-    used_gb=$(awk "BEGIN {printf \"%.1f\", $used_kb/1048576}")
-    total_gb=$(awk "BEGIN {printf \"%.1f\", $total/1048576}")
-    echo "${used_gb}GB/${total_gb}GB"
+    # Décimos de GB arredondados (como o %.1f do awk que antes fazia isso)
+    local used_t=$(( ((total - avail) * 10 + 524288) / 1048576 ))
+    local total_t=$(( (total * 10 + 524288) / 1048576 ))
+    RAM="$((used_t / 10)).$((used_t % 10))GB/$((total_t / 10)).$((total_t % 10))GB"
 }
 
-# 2. Coleta o uso do processador (CPU %)
+# Último estado lido de /proc/stat: o uso sai da diferença entre dois ciclos do laço
+cpu_prev_idle=0
+cpu_prev_total=0
+
+# 2. Coleta o uso do processador (CPU %), do sistema inteiro
 get_cpu() {
+    local _ user nice system idle iowait irq softirq steal
     read -r _ user nice system idle iowait irq softirq steal _ < /proc/stat
-    prev_idle=$((idle + iowait))
-    prev_total=$((user + nice + system + idle + iowait + irq + softirq + steal))
+    local idle_now=$((idle + iowait))
+    local total_now=$((user + nice + system + idle + iowait + irq + softirq + steal))
 
-    sleep 0.3
+    local diff_idle=$((idle_now - cpu_prev_idle))
+    local diff_total=$((total_now - cpu_prev_total))
+    cpu_prev_idle=$idle_now
+    cpu_prev_total=$total_now
 
-    read -r _ user nice system idle iowait irq softirq steal _ < /proc/stat
-    idle=$((idle + iowait))
-    total=$((user + nice + system + idle + iowait + irq + softirq + steal))
-
-    diff_idle=$((idle - prev_idle))
-    diff_total=$((total - prev_total))
-
+    CPU=0
     if [ "$diff_total" -gt 0 ]; then
-        cpu_usage=$(( (100 * (diff_total - diff_idle)) / diff_total ))
-    else
-        cpu_usage=0
+        CPU=$(( (100 * (diff_total - diff_idle)) / diff_total ))
     fi
-    echo "${cpu_usage}%"
+    CPU+="%"
 }
 
 # 3. Coleta a porcentagem e status da Bateria
 get_battery() {
-    bat_path="/sys/class/power_supply/BAT0"
+    local bat_path="/sys/class/power_supply/BAT0"
     [ ! -d "$bat_path" ] && bat_path="/sys/class/power_supply/BAT1"
 
     if [ -d "$bat_path" ]; then
-        cap=$(cat "$bat_path/capacity" 2>/dev/null || echo "0")
-        status=$(cat "$bat_path/status" 2>/dev/null || echo "Discharging")
+        local cap=0 status=Discharging
+        read -r cap 2>/dev/null < "$bat_path/capacity" || cap=0
+        read -r status 2>/dev/null < "$bat_path/status" || status=Discharging
         if [ "$status" = "Charging" ]; then
-            echo "⚡ ${cap}%"
+            BAT="⚡ ${cap}%"
         else
-            echo "🔋 ${cap}%"
+            BAT="🔋 ${cap}%"
         fi
     else
-        echo "💻 AC"
+        BAT="💻 AC"
     fi
 }
 
-# 4. Coleta a Rede Conectada (Wi-Fi SSID ou Cabo)
+# Nome da rede Wi-Fi, consultado a cada 10 ciclos (o SSID muda raramente)
+net_ssid="Wi-Fi"
+net_ssid_ttl=0
+
+# 4. Coleta a Rede Conectada (Wi-Fi SSID ou Cabo). A interface vem da rota padrão em
+# /proc/net/route (destino 00000000)
 get_net() {
-    iface=$(ip route show default 2>/dev/null | awk '/default/ {print $5}' | head -n1)
+    local iface="" name dest _rest
+    while read -r name dest _rest; do
+        if [ "$dest" = "00000000" ]; then
+            iface=$name
+            break
+        fi
+    done < /proc/net/route
+
     if [ -z "$iface" ]; then
-        echo "❌ Off"
+        NET="❌ Off"
         return
     fi
 
     if [[ "$iface" == w* ]]; then
-        ssid=$(iwgetid -r 2>/dev/null)
-        [ -z "$ssid" ] && ssid="Wi-Fi"
-        echo "📶 $ssid"
+        if [ "$net_ssid_ttl" -le 0 ]; then
+            net_ssid=$(iwgetid -r 2>/dev/null)
+            [ -z "$net_ssid" ] && net_ssid="Wi-Fi"
+            net_ssid_ttl=10
+        fi
+        net_ssid_ttl=$((net_ssid_ttl - 1))
+        NET="📶 $net_ssid"
     else
-        echo "🔌 Cabo ($iface)"
+        NET="🔌 Cabo ($iface)"
     fi
 }
 
-# 5. Formatação da Data e Hora
+# 5. Formatação da Data e Hora (o printf do bash formata sem chamar o comando date)
 get_clock() {
-    date "+📅 %d/%m/%Y %H:%M"
+    printf -v CLOCK "📅 %(%d/%m/%Y %H:%M)T" -1
 }
 
 # 6. Renderização dos Workspaces (0 a 8 -> 1 a 9) com Ação de Clique
 get_workspaces() {
-    curr_ws=$(xprop -root _NET_CURRENT_DESKTOP 2>/dev/null | awk '{print $3}')
-    [ -z "$curr_ws" ] && curr_ws=0
+    local line curr_ws=0 occupied=0
+
+    # Uma só consulta ao X para as duas propriedades
+    while read -r line; do
+        case "$line" in
+            _NET_CURRENT_DESKTOP*) curr_ws=${line##* } ;;
+            _33WM_OCCUPIED*) occupied=${line##* } ;;
+        esac
+    done < <(xprop -root _NET_CURRENT_DESKTOP _33WM_OCCUPIED 2>/dev/null)
 
     # Máscara de workspaces com janelas, publicada pelo WM (bit i = workspace i)
-    occupied=$(xprop -root _33WM_OCCUPIED 2>/dev/null | awk '{print $3}')
+    [[ "$curr_ws" =~ ^[0-9]+$ ]] || curr_ws=0
     [[ "$occupied" =~ ^[0-9]+$ ]] || occupied=0
 
-    ws_out=""
+    WORKSPACES=""
     for i in {0..8}; do
         # Mostra só os workspaces com janelas e o ativo (dinâmico, como no niri)
         if [ "$i" -ne "$curr_ws" ] && [ $(( (occupied >> i) & 1 )) -eq 0 ]; then
@@ -105,22 +133,25 @@ get_workspaces() {
         ws_num=$((i + 1))
         # %{A1:xdotool set_desktop $i:} torna a área clicável (botão esquerdo = ação)
         if [ "$i" -eq "$curr_ws" ]; then
-            ws_out+="%{A1:xdotool set_desktop $i:}%{B$WS_ACTIVE_BG}%{F$WS_ACTIVE_FG} $ws_num %{F-}%{B-}%{A} "
+            WORKSPACES+="%{A1:xdotool set_desktop $i:}%{B$WS_ACTIVE_BG}%{F$WS_ACTIVE_FG} $ws_num %{F-}%{B-}%{A} "
         else
-            ws_out+="%{A1:xdotool set_desktop $i:}%{B$WS_INACTIVE_BG}%{F$FG_MAIN} $ws_num %{F-}%{B-}%{A} "
+            WORKSPACES+="%{A1:xdotool set_desktop $i:}%{B$WS_INACTIVE_BG}%{F$FG_MAIN} $ws_num %{F-}%{B-}%{A} "
         fi
     done
-    echo "$ws_out"
 }
+
+# Primeira leitura de /proc/stat: o próximo ciclo já tem um intervalo para calcular o uso
+get_cpu
+sleep 1
 
 # Loop Principal de Atualização
 while true; do
-    WORKSPACES=$(get_workspaces)
-    RAM=$(get_ram)
-    CPU=$(get_cpu)
-    BAT=$(get_battery)
-    NET=$(get_net)
-    CLOCK=$(get_clock)
+    get_workspaces
+    get_ram
+    get_cpu
+    get_battery
+    get_net
+    get_clock
 
     # Sintaxe do Lemonbar:
     # %{l} = Alinhado à esquerda | %{c} = Alinhado ao centro | %{r} = Alinhado à direita
