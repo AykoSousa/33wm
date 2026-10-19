@@ -974,6 +974,24 @@ static void grab_click_to_focus(WM *wm, xcb_window_t win) {
     xcb_flush(wm->conn);
 }
 
+// Localiza uma janela em coluna (de qualquer workspace). Os ponteiros valem até a próxima
+// alteração do layout, então use logo após a busca.
+static Window *find_tiled(WM *wm, xcb_window_t win, int *ws_out, Column **col_out, int *idx_out) {
+    for (int i = 0; i < NUM_WORKSPACES; i++) {
+        for (Column *col = wm->workspaces[i].first_col; col != NULL; col = col->next) {
+            for (int j = 0; j < col->window_count; j++) {
+                if (col->windows[j].id == win) {
+                    if (ws_out) *ws_out = i;
+                    if (col_out) *col_out = col;
+                    if (idx_out) *idx_out = j;
+                    return &col->windows[j];
+                }
+            }
+        }
+    }
+    return NULL;
+}
+
 static void handle_map_request(WM *wm, xcb_map_request_event_t *ev) {
     // Consulta os atributos da janela que solicitou ser exibida
     xcb_get_window_attributes_cookie_t cookie = xcb_get_window_attributes(wm->conn, ev->window);
@@ -987,6 +1005,12 @@ static void handle_map_request(WM *wm, xcb_map_request_event_t *ev) {
     if (override_redirect || is_dock_window(wm, ev->window)) {
         xcb_map_window(wm->conn, ev->window);
         xcb_flush(wm->conn);
+        return;
+    }
+
+    // Janela que já está no layout (ex.: escondida pelo WM e remapeada pelo app) não entra
+    // de novo: duplicada, ela apareceria em dois workspaces. O layout decide se ela é mostrada.
+    if (find_tiled(wm, ev->window, NULL, NULL, NULL) != NULL || float_find(wm, ev->window) != NULL) {
         return;
     }
 
@@ -1016,24 +1040,6 @@ static void handle_destroy_notify(WM *wm, xcb_destroy_notify_event_t *ev) {
     }
     wm_apply_layout(wm);
     wm_focus_active(wm);
-}
-
-// Localiza uma janela em coluna (de qualquer workspace). Os ponteiros valem até a próxima
-// alteração do layout, então use logo após a busca.
-static Window *find_tiled(WM *wm, xcb_window_t win, int *ws_out, Column **col_out, int *idx_out) {
-    for (int i = 0; i < NUM_WORKSPACES; i++) {
-        for (Column *col = wm->workspaces[i].first_col; col != NULL; col = col->next) {
-            for (int j = 0; j < col->window_count; j++) {
-                if (col->windows[j].id == win) {
-                    if (ws_out) *ws_out = i;
-                    if (col_out) *col_out = col;
-                    if (idx_out) *idx_out = j;
-                    return &col->windows[j];
-                }
-            }
-        }
-    }
-    return NULL;
 }
 
 /* UnmapNotify: unmaps pedidos pelo próprio WM são consumidos pelo contador pending_unmaps.
