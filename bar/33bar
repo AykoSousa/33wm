@@ -17,7 +17,7 @@ BAR_W=${BAR_W:-1920}
 # Valores padrão (Tokyo Night). Os nomes das cores seguem o i3bar (focused_workspace...).
 set_defaults() {
     height=26
-    font=""
+    font="JetBrainsMono Nerd Font"
     background="#1a1b26"
     statusline="#a9b1d6"
     accent="#bb9af7"
